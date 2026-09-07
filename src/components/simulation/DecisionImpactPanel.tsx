@@ -1,11 +1,14 @@
 /**
  * "Before the decision" vs "after the intervention" — the moment that shows the
- * decision changed the simulated future, not just a number. Values tween when
- * the source result changes.
+ * decision changed the simulated future, not just a number.
+ *
+ * The rows and the better/worse reading both come from `impact.changes`, which
+ * the engine built from each metric's own declared direction. This component
+ * decides nothing about what counts as an improvement; it only draws it.
  */
 
 import { useEffect, useRef, useState } from 'react';
-import type { DecisionImpact, ScenarioConfig, StepMetrics } from '../../simulation/types';
+import type { DecisionImpact, MetricDelta, ScenarioConfig } from '../../simulation/types';
 import styles from './DecisionImpactPanel.module.css';
 
 interface DecisionImpactPanelProps {
@@ -15,11 +18,8 @@ interface DecisionImpactPanelProps {
   reveal: number;
 }
 
-interface Row {
-  key: keyof StepMetrics | 'risk_label';
-  label: string;
-  format: (v: number) => string;
-}
+/** Risk is shown as its band label, not as a number in the delta list. */
+const HIDDEN_METRICS = new Set(['risk']);
 
 export function DecisionImpactPanel({ impact, scenario, reveal }: DecisionImpactPanelProps) {
   if (!impact) {
@@ -35,12 +35,7 @@ export function DecisionImpactPanel({ impact, scenario, reveal }: DecisionImpact
     );
   }
 
-  const tempUnit = scenario.metricUnits?.temperature ?? '';
-  const rows: Row[] = [
-    { key: 'temperature', label: 'Temperature', format: (v) => `${v.toFixed(1)}${tempUnit}` },
-    { key: 'viability', label: 'Viability', format: (v) => `${v.toFixed(0)}%` },
-    { key: 'delay', label: 'Added delay', format: (v) => `${v.toFixed(0)} min` },
-  ];
+  const changes = impact.changes.filter((c) => !HIDDEN_METRICS.has(String(c.metric)));
 
   return (
     <section className="panel">
@@ -51,8 +46,13 @@ export function DecisionImpactPanel({ impact, scenario, reveal }: DecisionImpact
       <div className={`panel__body ${styles.body}`}>
         <div className={styles.col}>
           <span className={`u-label ${styles.colHead}`}>Before decision</span>
-          {rows.map((r) => (
-            <Metric key={r.key} label={r.label} value={num(impact.before, r.key)} format={r.format} />
+          {changes.map((change) => (
+            <Metric
+              key={String(change.metric)}
+              label={change.label}
+              value={change.before}
+              format={(v) => formatMetric(scenario, change, v)}
+            />
           ))}
           <div className={styles.risk}>
             Risk <strong>{impact.riskBefore ?? '—'}</strong>
@@ -65,17 +65,23 @@ export function DecisionImpactPanel({ impact, scenario, reveal }: DecisionImpact
 
         <div className={`${styles.col} ${styles.after}`} style={{ opacity: 0.35 + 0.65 * reveal }}>
           <span className={`u-label ${styles.colHead}`}>After intervention</span>
-          {rows.map((r) => (
+          {changes.map((change) => (
             <Metric
-              key={r.key}
-              label={r.label}
-              value={lerp(num(impact.before, r.key), num(impact.projected, r.key), reveal)}
-              format={r.format}
+              key={String(change.metric)}
+              label={change.label}
+              value={lerp(change.before, change.after, reveal)}
+              format={(v) => formatMetric(scenario, change, v)}
+              // The badge describes where the projection ENDS, so it only
+              // appears once the projection has started revealing. Showing
+              // "worse" beside an unchanged number reads as a contradiction.
+              delta={reveal > 0.05 ? change : undefined}
               emphasise
             />
           ))}
           <div className={styles.risk}>
-            Risk <strong>{impact.riskAfter ?? '—'}</strong>
+            {/* Gated on reveal for the same reason as the delta badges: the
+                projected band beside unrevealed numbers reads as a mismatch. */}
+            Risk <strong>{reveal > 0.05 ? (impact.riskAfter ?? '—') : (impact.riskBefore ?? '—')}</strong>
           </div>
         </div>
       </div>
@@ -83,9 +89,15 @@ export function DecisionImpactPanel({ impact, scenario, reveal }: DecisionImpact
   );
 }
 
-function num(m: StepMetrics, key: Row['key']): number {
-  if (key === 'risk_label') return 0;
-  return m[key] ?? 0;
+function formatMetric(scenario: ScenarioConfig, change: MetricDelta, value: number): string {
+  const id = String(change.metric);
+  const definition = scenario.metrics.find((m) => String(m.id) === id);
+  const unit = definition?.unit ?? '';
+  if (id === 'cost') return `₹${(value / 100000).toFixed(1)}L`;
+  if (id === 'viability') return `${value.toFixed(0)}%`;
+  if (id === 'delay') return `${value.toFixed(0)} min`;
+  if (id === 'exposure') return `${value.toFixed(0)} ${unit}`;
+  return `${value.toFixed(1)}${unit}`;
 }
 
 function lerp(a: number, b: number, f: number): number {
@@ -96,18 +108,27 @@ function Metric({
   label,
   value,
   format,
+  delta,
   emphasise,
 }: {
   label: string;
   value: number;
   format: (v: number) => string;
+  delta?: MetricDelta;
   emphasise?: boolean;
 }) {
   const display = useTween(value);
   return (
     <div className={styles.metric}>
       <span className="u-label">{label}</span>
-      <span className={`${styles.value} u-mono ${emphasise ? styles.valueAfter : ''}`}>{format(display)}</span>
+      <span className={`${styles.value} u-mono ${emphasise ? styles.valueAfter : ''}`}>
+        {format(display)}
+        {delta && delta.direction !== 'neutral' && (
+          <span className={`${styles.delta} ${styles[delta.direction]}`}>
+            {delta.direction === 'better' ? '▲' : '▼'} {delta.direction}
+          </span>
+        )}
+      </span>
     </div>
   );
 }

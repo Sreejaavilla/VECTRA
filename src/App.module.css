@@ -88,3 +88,14 @@
   padding: var(--gap);
   overflow: auto;
 }
+
+/* Runs the whole decision space rather than one strategy. */
+.evaluateBtn {
+  border-color: var(--ok);
+  color: var(--ok);
+  font-weight: 700;
+}
+.evaluateBtn:hover {
+  background: rgba(70, 201, 139, 0.12);
+  border-color: var(--ok);
+}

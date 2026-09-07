@@ -1,13 +1,13 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { coldChainScenario, runMockSimulation } from '../../../simulation/mockEngine';
+import { run } from '../../../engine/__tests__/fixtures';
 import { getStateAtTime } from '../../../simulation/selectors';
 import { OperationalMap } from '../OperationalMap';
 import { SimulationTimeline } from '../SimulationTimeline';
 import { DecisionImpactPanel } from '../DecisionImpactPanel';
 import { SimulationViewport } from '../SimulationViewport';
 
-const result = runMockSimulation(coldChainScenario, 'emergency_interception');
+const result = run('emergency_interception');
 
 describe('OperationalMap', () => {
   it('renders a facility label per facility and an entity per active entity', () => {

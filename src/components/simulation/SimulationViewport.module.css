@@ -55,6 +55,23 @@
   max-height: 200px;
 }
 
+/* Decision impact sits alone until a full evaluation exists, then shares the
+   row with the recommendation it produced. */
+.decisionRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--gap);
+  flex: 0 0 auto;
+}
+.decisionRowSplit {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+@media (max-width: 1100px) {
+  .decisionRowSplit {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .charts {
   display: grid;
   grid-template-columns: 1fr 1fr;

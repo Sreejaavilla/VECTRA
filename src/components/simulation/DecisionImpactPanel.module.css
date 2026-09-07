@@ -54,3 +54,24 @@
   color: var(--text-2);
   font-size: var(--fs-body);
 }
+
+/* Direction badge on the "after" column — reads from MetricDelta.direction,
+   which the engine derived from each metric's own declared direction. */
+.delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 7px;
+  font-family: var(--font-sans);
+  font-size: 9.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.better {
+  color: var(--ok);
+}
+.worse {
+  color: var(--crit);
+}

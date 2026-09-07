@@ -1,9 +1,9 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { coldChainScenario, runMockSimulation } from '../../../simulation/mockEngine';
+import { run } from '../../../engine/__tests__/fixtures';
 import { useSimulationPlayback } from '../../../simulation/useSimulationPlayback';
 
-const result = runMockSimulation(coldChainScenario, 'continue');
+const result = run('continue');
 
 describe('useSimulationPlayback', () => {
   it('starts paused at zero', () => {
@@ -53,7 +53,7 @@ describe('useSimulationPlayback', () => {
       initialProps: { r: result },
     });
     act(() => hook.current.seek(50));
-    const next = runMockSimulation(coldChainScenario, 'hybrid');
+    const next = run('hybrid');
     rerender({ r: next });
     expect(hook.current.currentTime).toBe(0);
   });

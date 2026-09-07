@@ -1,42 +1,143 @@
 /**
  * Demo harness — a deliberate STAND-IN for the UI/UX engineer's control panel.
- * It exists so the visualization layer is runnable end-to-end. The real product
- * feeds `SimulationResult`s into <SimulationViewport> from the shared UI.
+ * It exists so the engine and visualization are runnable end-to-end.
+ *
+ * Note what it does NOT do: it never computes a metric, a feasibility verdict or
+ * a score. It gathers `SimulationInputs`, calls the engine, and hands the result
+ * to <SimulationViewport>. Everything else is the engine's job.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   coldChainScenario,
-  runMockSimulation,
+  DEFAULT_PRIORITIES,
+  evaluateScenario,
+  runSimulation,
   STRATEGY_LABELS,
-  type StrategyId,
-  type WhatIfInputs,
+  normalizeWeights,
+  type ScenarioEvaluation,
+  type SimulationInputs,
+  type SimulationResult,
 } from './simulation';
-import type { SimulationResult } from './simulation/types';
 import { SimulationViewport } from './components/simulation/SimulationViewport';
 import styles from './App.module.css';
 
-const STRATEGIES = Object.keys(STRATEGY_LABELS) as StrategyId[];
+const STRATEGIES = Object.keys(STRATEGY_LABELS);
+
+/** Relative weights of the non-safety objectives, used to split the remainder. */
+const OTHER_OBJECTIVES = Object.keys(DEFAULT_PRIORITIES).filter((id) => id !== 'obj-safety');
+
+interface Controls {
+  safetyPriority: number;
+  budgetLakh: number;
+  storageDoses: number;
+  supportVehicleAvailable: boolean;
+}
+
+/**
+ * Turn a 0-100 safety slider into objective weights that sum to 1 — the global
+ * convention the engine validates against. The remainder is split across the
+ * other objectives in their declared proportions.
+ */
+function toPriorities(safetyPriority: number): Record<string, number> {
+  const safety = Math.max(0, Math.min(100, safetyPriority)) / 100;
+  const otherTotal = OTHER_OBJECTIVES.reduce((sum, id) => sum + DEFAULT_PRIORITIES[id], 0);
+  const raw: Record<string, number> = { 'obj-safety': safety };
+  for (const id of OTHER_OBJECTIVES) {
+    raw[id] = otherTotal === 0 ? 0 : (1 - safety) * (DEFAULT_PRIORITIES[id] / otherTotal);
+  }
+  // Normalize once more so floating-point drift never trips the engine's
+  // "weights must sum to 1" validation.
+  return normalizeWeights(raw);
+}
+
+function toInputs(controls: Controls): SimulationInputs {
+  return {
+    resources: {
+      'res-budget': controls.budgetLakh,
+      'res-cold-storage': controls.storageDoses,
+      'res-support-vehicle': controls.supportVehicleAvailable,
+    },
+    constraints: {},
+    priorities: toPriorities(controls.safetyPriority),
+  };
+}
 
 export default function App() {
-  const [inputs, setInputs] = useState<WhatIfInputs>({
-    safetyPriority: 50,
+  const [controls, setControls] = useState<Controls>({
+    safetyPriority: 40,
     budgetLakh: 8,
+    storageDoses: 2400,
     supportVehicleAvailable: true,
   });
   const [result, setResult] = useState<SimulationResult | null>(null);
+  const [evaluation, setEvaluation] = useState<ScenarioEvaluation | null>(null);
   const [history, setHistory] = useState<SimulationResult[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const [runCount, setRunCount] = useState(0);
 
+  const inputs = useMemo(() => toInputs(controls), [controls]);
+
+  const record = useCallback((next: SimulationResult) => {
+    setResult(next);
+    setHistory((h) => [...h, next].slice(-6));
+  }, []);
+
+  /** Simulate one strategy. */
   const run = useCallback(
-    (strategy: StrategyId) => {
+    (strategy: string) => {
       const nextCount = runCount + 1;
-      const r = runMockSimulation(coldChainScenario, strategy, inputs, nextCount);
       setRunCount(nextCount);
-      setResult(r);
-      setHistory((h) => [...h, r].slice(-6));
+      const outcome = runSimulation(coldChainScenario, inputs, strategy, {
+        runNumber: nextCount,
+      });
+      if (!outcome.ok) {
+        setError(
+          `${outcome.error.message}${
+            outcome.error.details?.length
+              ? `\n${outcome.error.details.map((d) => `• ${d.message}`).join('\n')}`
+              : ''
+          }`,
+        );
+        return;
+      }
+      setError(null);
+      setEvaluation(null);
+      record(outcome.value.result);
     },
-    [inputs, runCount],
+    [inputs, record, runCount],
+  );
+
+  /** Simulate the whole decision space and recommend. */
+  const evaluateAll = useCallback(() => {
+    const nextCount = runCount + 1;
+    setRunCount(nextCount);
+    const outcome = evaluateScenario(coldChainScenario, inputs, { runNumber: nextCount });
+    if (!outcome.ok) {
+      setError(outcome.error.message);
+      return;
+    }
+    setError(null);
+    setEvaluation(outcome.value);
+    const recommended = outcome.value.recommendation;
+    const chosen =
+      outcome.value.results.find((r) => r.strategy === recommended?.strategyId) ??
+      outcome.value.results[0] ??
+      null;
+    if (chosen) record(chosen);
+  }, [inputs, record, runCount]);
+
+  /** Switch the viewport to another already-simulated strategy. */
+  const selectStrategy = useCallback(
+    (strategyId: string) => {
+      const existing = evaluation?.results.find((r) => r.strategy === strategyId);
+      if (existing) {
+        setResult(existing);
+        return;
+      }
+      run(strategyId);
+    },
+    [evaluation, run],
   );
 
   return (
@@ -53,32 +154,56 @@ export default function App() {
               type="range"
               min={0}
               max={100}
-              value={inputs.safetyPriority}
-              onChange={(e) => setInputs((s) => ({ ...s, safetyPriority: Number(e.target.value) }))}
+              value={controls.safetyPriority}
+              onChange={(e) =>
+                setControls((s) => ({ ...s, safetyPriority: Number(e.target.value) }))
+              }
             />
-            <span className="u-mono">{inputs.safetyPriority}</span>
+            <span className="u-mono">{controls.safetyPriority}</span>
           </label>
           <label className={styles.field}>
             <span className="u-label">Budget ₹L</span>
             <input
               type="range"
-              min={2}
+              min={1}
               max={12}
-              value={inputs.budgetLakh}
-              onChange={(e) => setInputs((s) => ({ ...s, budgetLakh: Number(e.target.value) }))}
+              step={0.5}
+              value={controls.budgetLakh}
+              onChange={(e) => setControls((s) => ({ ...s, budgetLakh: Number(e.target.value) }))}
             />
-            <span className="u-mono">{inputs.budgetLakh}</span>
+            <span className="u-mono">{controls.budgetLakh}</span>
+          </label>
+          <label className={styles.field}>
+            <span className="u-label">Cold storage</span>
+            <input
+              type="range"
+              min={0}
+              max={3000}
+              step={100}
+              value={controls.storageDoses}
+              onChange={(e) => setControls((s) => ({ ...s, storageDoses: Number(e.target.value) }))}
+            />
+            <span className="u-mono">{controls.storageDoses}</span>
           </label>
           <label className={styles.check}>
             <input
               type="checkbox"
-              checked={inputs.supportVehicleAvailable}
-              onChange={(e) => setInputs((s) => ({ ...s, supportVehicleAvailable: e.target.checked }))}
+              checked={controls.supportVehicleAvailable}
+              onChange={(e) =>
+                setControls((s) => ({ ...s, supportVehicleAvailable: e.target.checked }))
+              }
             />
             <span className="u-label">Support vehicle available</span>
           </label>
         </div>
         <div className={styles.strategies}>
+          <button
+            type="button"
+            className={`${styles.strategyBtn} ${styles.evaluateBtn}`}
+            onClick={evaluateAll}
+          >
+            Evaluate all strategies
+          </button>
           {STRATEGIES.map((s) => (
             <button
               key={s}
@@ -95,6 +220,9 @@ export default function App() {
       <main className={styles.stage}>
         <SimulationViewport
           result={result}
+          error={error}
+          evaluation={evaluation}
+          onSelectStrategy={selectStrategy}
           comparisonResults={history}
           canCompare={history.length >= 2}
           onReplay={() => {
