@@ -1,140 +1,36 @@
 /**
  * CAUSALIS / VECTRA — Simulation data contract (integration boundary).
  *
- * This is the interface the simulation engine must eventually produce. The
- * visualization layer consumes `SimulationResult` and never computes domain
- * metrics (temperature, viability, scoring, feasibility) itself.
+ * This is the interface the simulation engine produces and the visualization
+ * layer consumes. The view never computes domain metrics (temperature,
+ * viability, scoring, feasibility) itself.
+ *
+ * The generic decision primitives — scenario, actions, constraints, objectives,
+ * metrics, resources, state — live in `src/domain` and are re-exported here so
+ * every consumer keeps a single import site.
  *
  * Identity rule: entities, routes, facilities, resources and events are ALWAYS
  * referenced by stable string id — never by array index, position or timestamp.
  */
 
-/** Abstract map coordinate. The operational map uses a 0..100 (x) by 0..60 (y) space. */
-export interface Vec2 {
-  x: number;
-  y: number;
-}
+export * from '../domain';
 
-/** Optional utilization state the map renders when present. */
-export interface Capacity {
-  capacity: number;
-  used: number;
-  unit?: string;
-}
+import type {
+  ConstraintViolation,
+  EntityState,
+  FeasibilityReport,
+  MetricDelta,
+  ObjectiveContribution,
+  ResourceState,
+  ScenarioConfig,
+  SimulationEvent,
+  SimulationInputs,
+  StepMetrics,
+} from '../domain';
 
-export type FacilityKind = 'hub' | 'destination' | 'storage' | (string & {});
-
-export interface Facility {
-  id: string;
-  kind: FacilityKind;
-  label: string;
-  position: Vec2;
-  /** Cold-storage used/total, hospital received/demand, etc. */
-  capacity?: Capacity;
-  /** Priority, ETA and other display-only annotations. */
-  meta?: Record<string, string | number>;
-}
-
-export type RouteKind = 'primary' | 'emergency' | 'reroute' | (string & {});
-
-export interface Route {
-  id: string;
-  from: string;
-  to: string;
-  /** Optional polyline; a straight line between endpoints is used when absent. */
-  waypoints?: Vec2[];
-  kind?: RouteKind;
-  capacity?: Capacity;
-  blocked?: boolean;
-}
-
-export type EntityKind = 'shipment_vehicle' | 'support_vehicle' | (string & {});
-
-export interface EntityState {
-  id: string;
-  kind: EntityKind;
-  label: string;
-  /** Route the entity is currently travelling. */
-  routeId: string | null;
-  /** 0..1 along `routeId`. */
-  progress: number;
-  /** Explicit position override (e.g. staged off-route). Wins over route+progress. */
-  position?: Vec2;
-  /**
-   * e.g. 'en_route' | 'refrigeration_failed' | 'intercepted' | 'delivering'
-   * | 'delivered' | 'idle' | 'dispatched'
-   */
-  status: string;
-  /** Whether the entity is drawn on the map at all. */
-  active: boolean;
-}
-
-export type ResourceStatus = 'available' | 'allocated' | 'depleted' | 'unavailable';
-
-export interface ResourceState {
-  id: string;
-  label: string;
-  status: ResourceStatus;
-  /** "4,200 / 5,000 capacity", "₹3.2L remaining", etc. */
-  detail?: string;
-}
-
-export type SimulationEventType =
-  | 'FAILURE'
-  | 'RESOURCE_ALLOCATED'
-  | 'VEHICLE_DISPATCHED'
-  | 'INTERCEPTION'
-  | 'STORAGE_TRANSFER'
-  | 'REROUTE'
-  | 'THRESHOLD_CROSSED'
-  | 'DELIVERY'
-  | 'RECOVERY'
-  | 'DECISION'
-  | (string & {});
-
-/**
- * System events describe what happened TO the system; decision events describe
- * what the decision-maker DID. The timeline renders them differently.
- */
-export type EventClass = 'system' | 'decision';
-
-/** Event types that are decisions/interventions when `eventClass` is not set explicitly. */
-export const DECISION_TYPES: readonly string[] = [
-  'DECISION',
-  'VEHICLE_DISPATCHED',
-  'REROUTE',
-  'STORAGE_TRANSFER',
-  'RESOURCE_ALLOCATED',
-];
-
-export type EventSeverity = 'info' | 'warning' | 'critical';
-
-export interface SimulationEvent {
-  id: string;
-  /** Simulation minutes from t0. */
-  timestamp: number;
-  type: SimulationEventType;
-  /** Engine may set explicitly; otherwise derived from `type` via DECISION_TYPES. */
-  eventClass?: EventClass;
-  entityId?: string;
-  resourceId?: string;
-  facilityId?: string;
-  routeId?: string;
-  message: string;
-  severity?: EventSeverity;
-  /** Hint: which entity the view should emphasize when this event fires. */
-  focusEntityId?: string;
-}
-
-export interface StepMetrics {
-  temperature?: number;
-  viability?: number;
-  cost?: number;
-  delay?: number;
-  risk?: number;
-}
-
-export type MetricKey = keyof StepMetrics;
+/* --------------------------------------------------------------------------- *
+ * Steps — immutable keyframes
+ * --------------------------------------------------------------------------- */
 
 export interface SimulationStep {
   /** Simulation minutes, ascending. Step 0 is t0. */
@@ -142,30 +38,20 @@ export interface SimulationStep {
   entities: EntityState[];
   resources: ResourceState[];
   metrics: StepMetrics;
-  /** Events occurring at (or just before) this step. */
+  /** Events in the interval (previousStep.timestamp, this.timestamp]. */
   events: SimulationEvent[];
 }
 
-export interface MetricThresholds {
-  safe?: number;
-  critical?: number;
-  min?: number;
-  max?: number;
-}
-
-export interface ScenarioConfig {
-  id: string;
-  title: string;
-  facilities: Facility[];
-  routes: Route[];
-  metricThresholds: Partial<Record<MetricKey, MetricThresholds>>;
-  metricUnits?: Partial<Record<MetricKey, string>>;
-}
+/* --------------------------------------------------------------------------- *
+ * Analytics
+ * --------------------------------------------------------------------------- */
 
 /** From the analytics layer. Weights are 0..1. */
 export interface SensitivityDriver {
   label: string;
   weight: number;
+  /** Which input was perturbed, when the driver came from a real sweep. */
+  inputId?: string;
 }
 
 /** From the analytics layer. Scores are -1..2 (⚠ = -1..0, ✓ = 1, ✓✓ = 2). */
@@ -174,12 +60,60 @@ export interface TradeoffRow {
   scores: Record<string, number>;
 }
 
+/* --------------------------------------------------------------------------- *
+ * Outcome + recommendation
+ * --------------------------------------------------------------------------- */
+
 export interface SimulationOutcome {
   strategy: string;
   status: 'success' | 'partial' | 'failed';
   summary: string;
   finalMetrics: StepMetrics;
 }
+
+export interface RecommendationReason {
+  text: string;
+  kind: 'objective' | 'constraint' | 'tradeoff';
+  /** Present for 'objective' reasons: the arithmetic the text describes. */
+  contribution?: ObjectiveContribution;
+}
+
+export interface RejectedAlternative {
+  strategyId: string;
+  label: string;
+  reason: string;
+  feasible: boolean;
+  score?: number;
+}
+
+export interface Recommendation {
+  strategyId: string;
+  label: string;
+  score: number;
+  /** Full breakdown; contributions sum to the pre-penalty score. */
+  contributions: ObjectiveContribution[];
+  /** Total soft-constraint penalty subtracted from the summed contributions. */
+  penalty: number;
+  reasons: RecommendationReason[];
+  tradeoffs: TradeoffRow[];
+  rejectedAlternatives: RejectedAlternative[];
+}
+
+/** The whole decision space for one set of inputs. */
+export interface ScenarioEvaluation {
+  scenario: ScenarioConfig;
+  inputs: SimulationInputs;
+  feasibleStrategies: string[];
+  /** Statically infeasible AND trajectory-infeasible strategies. */
+  infeasibleStrategies: FeasibilityReport[];
+  /** One per statically-feasible strategy, all from the same initial state. */
+  results: SimulationResult[];
+  recommendation: Recommendation | null;
+}
+
+/* --------------------------------------------------------------------------- *
+ * Run identity + result
+ * --------------------------------------------------------------------------- */
 
 /** Identity + inputs for a run. Makes comparison and deterministic replay clean. */
 export interface RunIdentity {
@@ -188,8 +122,15 @@ export interface RunIdentity {
   label: string;
   /** Echoed configuration: safetyPriority, budget, etc. */
   inputs: Record<string, string | number>;
-  /** Deterministic: same seed + inputs => identical result. */
+  /** Structured inputs as handed to the engine. */
+  structuredInputs: SimulationInputs;
+  /**
+   * The seed actually used. Same scenario + inputs + strategy + seed +
+   * engineVersion produces a structurally identical result.
+   */
   seed: number;
+  engineVersion: string;
+  schemaVersion: number;
 }
 
 /**
@@ -202,6 +143,8 @@ export interface DecisionImpact {
   projected: StepMetrics;
   riskBefore?: string;
   riskAfter?: string;
+  /** Per-metric deltas, interpreted via each metric's own direction. */
+  changes: MetricDelta[];
 }
 
 export interface SimulationResult {
@@ -209,15 +152,22 @@ export interface SimulationResult {
   scenario: ScenarioConfig;
   /** Action that was simulated. */
   strategy: string;
+  strategyLabel: string;
   /** Total simulation minutes. */
   duration: number;
   steps: SimulationStep[];
-  /** Flattened, sorted; a superset of the per-step events. */
+  /** Flattened, sorted, unique; a superset of the per-step events. */
   events: SimulationEvent[];
   outcome: SimulationOutcome;
+  /** Static + trajectory feasibility for the simulated strategy. */
+  feasibility: FeasibilityReport;
+  /** Every violation observed, both scopes. Mirrors `feasibility.violations`. */
+  violations: ConstraintViolation[];
   decisionImpact?: DecisionImpact;
   sensitivity?: SensitivityDriver[];
   tradeoffs?: TradeoffRow[];
+  /** Set only on results produced through `evaluateScenario`. */
+  recommendation?: Recommendation;
 }
 
 /** Narrative summary of the run at a point in time. NOT authoritative state. */
@@ -228,3 +178,5 @@ export type NarrativePhase =
   | 'INTERVENTION'
   | 'RECOVERY'
   | 'DELIVERY';
+
+export const SCHEMA_VERSION = 2;

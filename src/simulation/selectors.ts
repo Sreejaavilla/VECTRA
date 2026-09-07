@@ -6,6 +6,11 @@
 
 import {
   DECISION_TYPES,
+  interpolatePosition,
+  lerp,
+  lerpVec,
+  METRIC_KEYS,
+  routePolyline as domainRoutePolyline,
   type EntityState,
   type EventClass,
   type MetricKey,
@@ -34,52 +39,15 @@ export function formatSimulationTime(minutes: number): string {
 }
 
 /* --------------------------------------------------------------------------- *
- * Geometry
+ * Geometry — the primitives live in the domain so the engine and the view agree
+ * on where a route's 40% mark is.
  * --------------------------------------------------------------------------- */
 
-function lerp(a: number, b: number, f: number): number {
-  return a + (b - a) * f;
-}
-
-function lerpVec(a: Vec2, b: Vec2, f: number): Vec2 {
-  return { x: lerp(a.x, b.x, f), y: lerp(a.y, b.y, f) };
-}
-
-/** Resolve a point at `progress` (0..1) along a polyline, by segment length. */
-export function interpolatePosition(points: Vec2[], progress: number): Vec2 {
-  if (points.length === 0) return { x: 0, y: 0 };
-  if (points.length === 1) return { ...points[0] };
-  const f = Math.max(0, Math.min(1, progress));
-
-  const lengths: number[] = [];
-  let total = 0;
-  for (let i = 1; i < points.length; i += 1) {
-    const dx = points[i].x - points[i - 1].x;
-    const dy = points[i].y - points[i - 1].y;
-    const len = Math.hypot(dx, dy);
-    lengths.push(len);
-    total += len;
-  }
-  if (total === 0) return { ...points[0] };
-
-  let target = f * total;
-  for (let i = 0; i < lengths.length; i += 1) {
-    if (target <= lengths[i] || i === lengths.length - 1) {
-      const segF = lengths[i] === 0 ? 0 : target / lengths[i];
-      return lerpVec(points[i], points[i + 1], segF);
-    }
-    target -= lengths[i];
-  }
-  return { ...points[points.length - 1] };
-}
+export { interpolatePosition };
 
 /** Points that define a route's polyline (explicit waypoints or endpoint centres). */
 export function routePolyline(route: Route, scenario: ScenarioConfig): Vec2[] {
-  if (route.waypoints && route.waypoints.length >= 2) return route.waypoints;
-  const from = scenario.facilities.find((fac) => fac.id === route.from);
-  const to = scenario.facilities.find((fac) => fac.id === route.to);
-  if (!from || !to) return [];
-  return [from.position, to.position];
+  return domainRoutePolyline(route, scenario.facilities);
 }
 
 /** Point at `progress` along a route. */
@@ -186,8 +154,7 @@ export function getStateAtTime(result: SimulationResult, t: number): StateAtTime
   const [prev, next, f] = bracketSteps(result.steps, t);
   const entities = interpolateEntities(prev.entities, next.entities, f);
   const metrics: StepMetrics = {};
-  const keys: MetricKey[] = ['temperature', 'viability', 'cost', 'delay', 'risk'];
-  for (const key of keys) {
+  for (const key of METRIC_KEYS) {
     const a = prev.metrics[key];
     const b = next.metrics[key];
     if (a == null && b == null) continue;
