@@ -11,4 +11,5 @@ export * from './model';
 export * from './objective';
 export * from './resource';
 export * from './scenario';
+export * from './sensitivity';
 export * from './state';

@@ -10,6 +10,7 @@ export {
   type StrategyId,
 } from './scenarios/coldChain';
 export {
+  analyzeSensitivity,
   evaluateScenario,
   runSimulation,
   ENGINE_VERSION,

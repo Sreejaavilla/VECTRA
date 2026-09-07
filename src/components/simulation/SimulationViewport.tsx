@@ -29,6 +29,7 @@ import { DecisionImpactPanel } from './DecisionImpactPanel';
 import { RunIdentityBar } from './RunIdentityBar';
 import { ComparisonView } from './ComparisonView';
 import { RecommendationPanel } from './RecommendationPanel';
+import { SensitivityPanel } from './SensitivityPanel';
 import { DebugOverlay } from './DebugOverlay';
 import styles from './SimulationViewport.module.css';
 
@@ -39,6 +40,8 @@ interface SimulationViewportProps {
   comparisonResults?: SimulationResult[];
   /** Present when the whole decision space was evaluated, not one strategy. */
   evaluation?: ScenarioEvaluation | null;
+  isAnalyzingSensitivity?: boolean;
+  onAnalyzeSensitivity?: () => void;
   onSelectStrategy?: (strategyId: string) => void;
   onReplay: () => void;
   onRequestCompare?: () => void;
@@ -51,6 +54,8 @@ export function SimulationViewport({
   error = null,
   comparisonResults,
   evaluation = null,
+  isAnalyzingSensitivity = false,
+  onAnalyzeSensitivity,
   onSelectStrategy,
   onReplay,
   onRequestCompare,
@@ -224,6 +229,15 @@ export function SimulationViewport({
           />
         )}
       </div>
+
+      {evaluation && (
+        <SensitivityPanel
+          report={evaluation.sensitivity ?? null}
+          scenario={result.scenario}
+          isAnalyzing={isAnalyzingSensitivity}
+          onAnalyze={onAnalyzeSensitivity}
+        />
+      )}
 
       <div className={styles.charts}>
         <section className={`panel ${styles.chartPanel}`}>

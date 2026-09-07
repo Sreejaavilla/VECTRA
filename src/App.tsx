@@ -9,6 +9,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import {
+  analyzeSensitivity,
   coldChainScenario,
   DEFAULT_PRIORITIES,
   evaluateScenario,
@@ -74,6 +75,7 @@ export default function App() {
   const [evaluation, setEvaluation] = useState<ScenarioEvaluation | null>(null);
   const [history, setHistory] = useState<SimulationResult[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [runCount, setRunCount] = useState(0);
 
   const inputs = useMemo(() => toInputs(controls), [controls]);
@@ -126,6 +128,29 @@ export default function App() {
       null;
     if (chosen) record(chosen);
   }, [inputs, record, runCount]);
+
+  /**
+   * Sensitivity is opt-in: it costs ~29 full evaluations, an order of magnitude
+   * more than the decision itself, so it never rides along with every run.
+   */
+  const analyzeSensitivityOfRun = useCallback(() => {
+    if (!evaluation) return;
+    setIsAnalyzing(true);
+    // The analysis is synchronous, so React would batch this state change away
+    // with the one below and never paint "Analyzing…". Yielding a frame first
+    // makes the pending state real rather than decorative.
+    setTimeout(() => {
+      const outcome = analyzeSensitivity(coldChainScenario, evaluation.inputs);
+      setIsAnalyzing(false);
+      if (!outcome.ok) {
+        setError(outcome.error.message);
+        return;
+      }
+      setEvaluation((current) =>
+        current ? { ...current, sensitivity: outcome.value } : current,
+      );
+    }, 0);
+  }, [evaluation]);
 
   /** Switch the viewport to another already-simulated strategy. */
   const selectStrategy = useCallback(
@@ -222,6 +247,8 @@ export default function App() {
           result={result}
           error={error}
           evaluation={evaluation}
+          isAnalyzingSensitivity={isAnalyzing}
+          onAnalyzeSensitivity={analyzeSensitivityOfRun}
           onSelectStrategy={selectStrategy}
           comparisonResults={history}
           canCompare={history.length >= 2}

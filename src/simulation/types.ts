@@ -23,6 +23,8 @@ import type {
   ObjectiveContribution,
   ResourceState,
   ScenarioConfig,
+  SensitivityDriver,
+  SensitivityReport,
   SimulationEvent,
   SimulationInputs,
   StepMetrics,
@@ -45,14 +47,6 @@ export interface SimulationStep {
 /* --------------------------------------------------------------------------- *
  * Analytics
  * --------------------------------------------------------------------------- */
-
-/** From the analytics layer. Weights are 0..1. */
-export interface SensitivityDriver {
-  label: string;
-  weight: number;
-  /** Which input was perturbed, when the driver came from a real sweep. */
-  inputId?: string;
-}
 
 /** From the analytics layer. Scores are -1..2 (⚠ = -1..0, ✓ = 1, ✓✓ = 2). */
 export interface TradeoffRow {
@@ -109,6 +103,11 @@ export interface ScenarioEvaluation {
   /** One per statically-feasible strategy, all from the same initial state. */
   results: SimulationResult[];
   recommendation: Recommendation | null;
+  /**
+   * Populated only when sensitivity analysis was explicitly requested — it
+   * costs many more evaluations than the decision itself.
+   */
+  sensitivity?: SensitivityReport;
 }
 
 /* --------------------------------------------------------------------------- *
