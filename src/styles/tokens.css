@@ -1,0 +1,75 @@
+/*
+ * CAUSALIS / VECTRA design tokens — dark operational-console theme.
+ * Single source of truth shared with the UI/UX engineer. Light theme is a
+ * deliberate non-goal for the hackathon (judging is on a dark console).
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --bg-0: #0a0d12;
+  --bg-1: #10141b;
+  --bg-2: #161c26;
+  --bg-3: #1e2632;
+  --panel-border: #263041;
+  --panel-border-strong: #34435a;
+
+  /* Text */
+  --text-0: #e8edf4;
+  --text-1: #a9b6c8;
+  --text-2: #6f7d92;
+  --text-mono: #cdd8e8;
+
+  /* Accents */
+  --accent: #4da3ff;
+  --accent-dim: #2b5c92;
+  --ok: #46c98b;
+  --warn: #f0a92e;
+  --crit: #f2544b;
+  --decision: #b98bff;
+
+  /* Metric semantics */
+  --temp: #f0a92e;
+  --viability: #46c98b;
+  --threshold-safe: rgba(70, 201, 139, 0.14);
+  --threshold-crit: rgba(242, 84, 75, 0.13);
+
+  /* Geometry */
+  --radius-s: 3px;
+  --radius-m: 5px;
+  --radius-l: 8px;
+  --gap: 12px;
+  --gap-s: 8px;
+
+  /* Type */
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Consolas", ui-monospace, monospace;
+  --fs-label: 10.5px;
+  --fs-body: 12.5px;
+  --fs-value: 15px;
+  --fs-value-lg: 22px;
+  --fs-title: 13px;
+
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.u-label {
+  font-size: var(--fs-label);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.u-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

@@ -1,0 +1,20 @@
+.overlay {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  max-width: 320px;
+  max-height: 70%;
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.82);
+  border: 1px solid var(--panel-border-strong);
+  border-radius: var(--radius-s);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--ok);
+  z-index: 30;
+  pointer-events: none;
+  white-space: pre-wrap;
+}

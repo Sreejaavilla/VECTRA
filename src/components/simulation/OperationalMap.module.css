@@ -1,0 +1,191 @@
+.map {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background:
+    radial-gradient(circle at 30% 20%, rgba(77, 163, 255, 0.05), transparent 60%),
+    var(--bg-0);
+}
+
+/* Routes ------------------------------------------------------------------- */
+.route {
+  color: var(--text-2);
+}
+.routeBase {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 0.5;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.4;
+}
+.routePrimary {
+  color: var(--text-1);
+}
+.routeReroute {
+  color: var(--accent);
+}
+.routeEmergency {
+  color: var(--decision);
+}
+.route_planned .routeBase {
+  stroke-dasharray: 1.4 1.4;
+  opacity: 0.28;
+}
+.route_active .routeBase {
+  opacity: 0.85;
+  stroke-width: 0.7;
+}
+.route_completed .routeBase {
+  opacity: 0.5;
+}
+.routeFlow {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 0.7;
+  vector-effect: non-scaling-stroke;
+  stroke-dasharray: 0.1 3;
+  stroke-linecap: round;
+  animation: flow 1.4s linear infinite;
+}
+@keyframes flow {
+  to {
+    stroke-dashoffset: -6.2;
+  }
+}
+.routeBlocked {
+  fill: none;
+  stroke: var(--crit);
+  stroke-width: 0.8;
+  stroke-dasharray: 0.8 1.6;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Facilities ------------------------------------------------------------- */
+.facility {
+  transition: opacity 0.4s var(--ease);
+}
+.facilityShape {
+  fill: var(--bg-3);
+  stroke: var(--panel-border-strong);
+  stroke-width: 0.4;
+  vector-effect: non-scaling-stroke;
+}
+.facilityLabel {
+  fill: var(--text-1);
+  font-size: 2.4px;
+  font-weight: 600;
+  text-anchor: middle;
+  font-family: var(--font-sans);
+}
+.facilityMeta {
+  fill: var(--text-2);
+  font-size: 2px;
+  text-anchor: middle;
+  font-family: var(--font-mono);
+}
+
+/* Entities ------------------------------------------------------------- */
+.entity {
+  transition: opacity 0.4s var(--ease);
+  cursor: pointer;
+}
+.entity g {
+  transition: transform 0.25s linear;
+}
+.entityShape {
+  fill: var(--accent);
+  stroke: var(--bg-0);
+  stroke-width: 0.4;
+  vector-effect: non-scaling-stroke;
+}
+.sev_critical .entityShape {
+  fill: var(--crit);
+}
+.sev_warning .entityShape {
+  fill: var(--warn);
+}
+.sev_ok .entityShape {
+  fill: var(--ok);
+}
+.entityFocused .entityShape {
+  transform: scale(1.15);
+}
+.entityHalo {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 0.4;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.7;
+  animation: halo 1.6s var(--ease) infinite;
+}
+.sev_critical .entityHalo {
+  stroke: var(--crit);
+}
+@keyframes halo {
+  0% {
+    r: 3.6;
+    opacity: 0.8;
+  }
+  100% {
+    r: 6.4;
+    opacity: 0;
+  }
+}
+.entityBadge {
+  fill: var(--crit);
+  font-size: 3.4px;
+  font-weight: 800;
+  font-family: var(--font-sans);
+}
+.entityLabel {
+  fill: var(--text-1);
+  font-size: 2px;
+  font-family: var(--font-sans);
+}
+
+.dim {
+  opacity: 0.28;
+}
+
+/* Event markers ------------------------------------------------------------- */
+.eventShape {
+  fill: none;
+  stroke-width: 0.5;
+  vector-effect: non-scaling-stroke;
+}
+.evInfo .eventShape {
+  stroke: var(--accent);
+}
+.evWarn .eventShape {
+  stroke: var(--warn);
+}
+.evCrit .eventShape {
+  stroke: var(--crit);
+}
+.eventPulse {
+  fill: none;
+  stroke-width: 0.4;
+  vector-effect: non-scaling-stroke;
+  opacity: 0;
+}
+.evCrit .eventPulse,
+.evWarn .eventPulse {
+  stroke: currentColor;
+  animation: evpulse 2s var(--ease) 3;
+}
+.evCrit .eventPulse {
+  stroke: var(--crit);
+}
+.evWarn .eventPulse {
+  stroke: var(--warn);
+}
+@keyframes evpulse {
+  0% {
+    r: 2.6;
+    opacity: 0.6;
+  }
+  100% {
+    r: 7;
+    opacity: 0;
+  }
+}

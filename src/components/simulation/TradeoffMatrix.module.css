@@ -1,0 +1,43 @@
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-body);
+}
+.table th {
+  text-align: center;
+  padding: 4px 6px;
+  font-size: var(--fs-label);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--panel-border);
+}
+.table td {
+  text-align: center;
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--panel-border);
+  font-family: var(--font-mono);
+}
+.rowHead {
+  text-align: left !important;
+  color: var(--text-1);
+  font-family: var(--font-sans);
+}
+.active {
+  background: var(--bg-3);
+}
+.active .rowHead {
+  color: var(--text-0);
+}
+.good {
+  color: var(--ok);
+}
+.ok {
+  color: var(--text-1);
+}
+.mid {
+  color: var(--text-2);
+}
+.bad {
+  color: var(--crit);
+}

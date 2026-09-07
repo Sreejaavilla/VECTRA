@@ -1,0 +1,183 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 4px 0;
+}
+
+.track {
+  position: relative;
+  height: 54px;
+  margin: 22px 10px 0;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.rail,
+.railPast,
+.railProjected {
+  position: absolute;
+  top: 20px;
+  height: 4px;
+  border-radius: 2px;
+}
+.rail {
+  left: 0;
+  right: 0;
+  background: var(--bg-3);
+}
+.railPast {
+  left: 0;
+  background: var(--accent);
+  opacity: 0.75;
+}
+.railProjected {
+  right: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--panel-border-strong) 0 3px,
+    transparent 3px 7px
+  );
+}
+
+.tick {
+  position: absolute;
+  top: 16px;
+  width: 1px;
+  height: 12px;
+  background: var(--panel-border);
+}
+.tickLabel {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.marker {
+  position: absolute;
+  top: 22px;
+  transform: translate(-50%, -50%);
+  background: none;
+  border: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  z-index: 2;
+}
+.markerGlyph {
+  width: 9px;
+  height: 9px;
+  background: var(--accent);
+  border: 1.5px solid var(--bg-0);
+}
+.markerSystem .markerGlyph {
+  border-radius: 50%;
+}
+.markerDecision {
+  top: 22px;
+}
+.markerDecision .markerGlyph {
+  width: 12px;
+  height: 12px;
+  background: var(--decision);
+  transform: rotate(45deg);
+}
+.markerCrit .markerGlyph {
+  background: var(--crit);
+}
+.markerCallout {
+  position: absolute;
+  top: 12px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  white-space: nowrap;
+  background: var(--bg-0);
+  padding: 0 2px;
+}
+/* System-event labels declutter the track: shown on hover only. */
+.markerSystem .markerCallout {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.markerSystem:hover .markerCallout,
+.markerSystem:focus-visible .markerCallout {
+  opacity: 1;
+  z-index: 4;
+}
+.markerDecision .markerCallout {
+  top: 15px;
+  color: var(--decision);
+}
+.markerActive .markerGlyph {
+  outline: 2px solid var(--text-0);
+  outline-offset: 1px;
+}
+.marker:hover .markerCallout {
+  color: var(--text-0);
+}
+
+.playhead {
+  position: absolute;
+  top: 8px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--text-0);
+  transform: translateX(-1px);
+  z-index: 3;
+  pointer-events: none;
+}
+.playheadLabel {
+  position: absolute;
+  top: -18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--text-0);
+  background: var(--bg-0);
+  padding: 1px 4px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--fs-label);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  padding: 0 10px 8px;
+}
+.legendGlyph {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin: 0 4px -1px 10px;
+}
+.legendGlyph.markerSystem {
+  border-radius: 50%;
+  background: var(--accent);
+}
+.legendGlyph.markerDecision {
+  background: var(--decision);
+  transform: rotate(45deg);
+}
+.captionPast {
+  color: var(--accent);
+}
+.captionProjected {
+  color: var(--text-1);
+}

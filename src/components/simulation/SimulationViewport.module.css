@@ -1,0 +1,103 @@
+.viewport {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  height: 100%;
+  min-height: 0;
+}
+
+.main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--gap);
+  flex: 1 1 auto;
+  min-height: 360px;
+}
+
+.mapPanel {
+  min-height: 0;
+}
+.mapBody {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.outcomeSummary {
+  font-size: var(--fs-label);
+  color: var(--text-2);
+  max-width: 60%;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-height: 0;
+  overflow: auto;
+}
+
+.lower {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--gap);
+  flex: 0 0 auto;
+}
+.timelinePanel {
+  min-width: 0;
+}
+.lower :global(.panel__body),
+.lower > :nth-child(2) {
+  max-height: 200px;
+}
+
+.charts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--gap);
+  flex: 0 0 auto;
+}
+.chartPanel {
+  min-width: 0;
+}
+
+.placeholder,
+.placeholderError {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 100%;
+  text-align: center;
+  border: 1px dashed var(--panel-border-strong);
+  border-radius: var(--radius-m);
+  background: var(--bg-1);
+}
+.placeholder h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  letter-spacing: 0.04em;
+  color: var(--text-0);
+}
+.placeholder p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-body);
+}
+.placeholderError h2 {
+  color: var(--crit);
+}
+
+@media (max-width: 1360px) {
+  .main {
+    grid-template-columns: minmax(0, 1fr) 260px;
+  }
+  .lower {
+    grid-template-columns: minmax(0, 1fr) 260px;
+  }
+}
