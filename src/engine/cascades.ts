@@ -149,6 +149,10 @@ export function createCascadeProcessor(rules: readonly CascadeRule[]): CascadePr
     emit: (e: SimulationEvent) => void,
     perStepCount: { n: number },
   ): void {
+    if (depth >= CASCADE_LIMITS.maxDepth) {
+      recordFault('depth', rule.id, now);
+      return;
+    }
     if (totalEmitted >= CASCADE_LIMITS.maxTotalEvents) {
       recordFault('total', rule.id, now);
       return;
@@ -229,10 +233,15 @@ export function createCascadeProcessor(rules: readonly CascadeRule[]): CascadePr
   function step(state: SimulationState, ctx: CascadeStepContext): void {
     const perStepCount = { n: 0 };
     // A mutable, growing view of this step's events so a rule can trigger on an
-    // event another rule just emitted.
+    // event another rule just emitted. `depthOf` maps event id -> cascade depth
+    // (upstream, non-cascade events count as depth -1 so the first generation
+    // lands at depth 0).
     const seen: SimulationEvent[] = [...ctx.stepEvents];
+    const depthOf = new Map<string, number>();
+    for (const e of seen) depthOf.set(e.id, e.cascade?.depth ?? -1);
     const emit = (e: SimulationEvent) => {
       seen.push(e);
+      depthOf.set(e.id, e.cascade?.depth ?? 0);
       ctx.emit(e);
     };
 
@@ -244,9 +253,14 @@ export function createCascadeProcessor(rules: readonly CascadeRule[]): CascadePr
       apply(p.rule, state, ctx.now, p.because, p.causeEventId, p.depth, emit, perStepCount);
     }
 
-    /* --- 2. evaluate triggers, generation by generation --- */
-    for (let depth = 0; depth < CASCADE_LIMITS.maxDepth; depth += 1) {
-      let firedThisGeneration = 0;
+    /* --- 2. evaluate triggers to a fixpoint. Each firing's depth comes from
+       its cause event (metric/time/state/resource triggers -> depth 0), so a
+       real N-deep chain is measured accurately and stopped at MAX_DEPTH. The
+       outer cap is a structural backstop, never the primary guard — crossing
+       semantics + one-shot guards already prevent A<->B oscillation. --- */
+    const HARD_ITERATION_CAP = CASCADE_LIMITS.maxDepth * 4 + 4;
+    for (let iteration = 0; iteration < HARD_ITERATION_CAP; iteration += 1) {
+      let firedThisPass = 0;
 
       for (const rule of rules) {
         const oneShot = rule.once ?? true;
@@ -257,28 +271,25 @@ export function createCascadeProcessor(rules: readonly CascadeRule[]): CascadePr
         armed.set(rule.id, met);
 
         // Crossing semantics: fire only on the false -> true transition.
-        const crossed = met && !wasArmed;
-        if (!crossed) continue;
+        if (!met || wasArmed) continue;
 
         fired.add(rule.id);
-        firedThisGeneration += 1;
+        firedThisPass += 1;
+
+        const causeDepth =
+          causeEventId != null ? (depthOf.get(causeEventId) ?? -1) : -1;
+        const depth = causeDepth + 1;
 
         const delay = rule.delayMinutes ?? 0;
         if (delay > 0) {
-          pending.push({
-            rule,
-            emitAt: ctx.now + delay,
-            because,
-            causeEventId,
-            depth,
-          });
+          pending.push({ rule, emitAt: ctx.now + delay, because, causeEventId, depth });
           continue;
         }
         apply(rule, state, ctx.now, because, causeEventId, depth, emit, perStepCount);
       }
 
-      if (firedThisGeneration === 0) break;
-      if (depth === CASCADE_LIMITS.maxDepth - 1 && firedThisGeneration > 0) {
+      if (firedThisPass === 0) break;
+      if (iteration === HARD_ITERATION_CAP - 1) {
         recordFault('depth', rules[0]?.id ?? 'unknown', ctx.now);
       }
     }

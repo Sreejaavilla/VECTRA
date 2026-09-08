@@ -17,6 +17,7 @@
 
 import type {
   ActionDefinition,
+  CascadeRule,
   ConstraintDefinition,
   Facility,
   MetricDefinition,
@@ -254,10 +255,12 @@ function compileScheduledEvents(
     // (see `applyResourceIncidents`) — the engine has no mid-run resource-loss.
   }
 
-  // Cascades with a plain time / event trigger compile directly to a scheduled
-  // event. Metric-triggered cascades need the step loop (roadmap).
+  // Cascades with a plain time trigger and no gating conditions compile directly
+  // to a scheduled event (cheapest path, preserves existing calibration).
+  // Everything else — event / metric triggers, or a time trigger with
+  // conditions — compiles to a CascadeRule handled inside the step loop.
   for (const c of graph.cascades) {
-    if (c.when.kind === 'time') {
+    if (c.when.kind === 'time' && c.conditions.length === 0) {
       events.push({
         id: `event-cascade-${c.id}`,
         atMinutes: c.when.atMinutes + c.delayMinutes,
@@ -272,6 +275,57 @@ function compileScheduledEvents(
   }
 
   return events.sort((a, b) => a.atMinutes - b.atMinutes || a.id.localeCompare(b.id));
+}
+
+/**
+ * Cascades that need the simulation loop: metric- and event-triggered rules, and
+ * time-triggered rules with gating conditions. Each becomes one engine
+ * `CascadeRule` with real state effects + a provenance-carrying event.
+ * `conditions` that reference a resource's availability are folded onto the
+ * trigger as a `whenFlag` / secondary check where the engine supports it;
+ * metric conditions are left to the trigger itself.
+ */
+function compileCascadeRules(graph: ScenarioGraph): CascadeRule[] {
+  const rules: CascadeRule[] = [];
+  for (const c of graph.cascades) {
+    const isLoopRule =
+      c.when.kind === 'metric' ||
+      c.when.kind === 'event' ||
+      (c.when.kind === 'time' && c.conditions.length > 0);
+    if (!isLoopRule) continue;
+
+    const trigger: CascadeRule['trigger'] =
+      c.when.kind === 'metric'
+        ? {
+            kind: 'metric',
+            metric: c.when.metric,
+            operator: c.when.op,
+            threshold: c.when.value,
+          }
+        : c.when.kind === 'event'
+          ? { kind: 'event', eventType: c.when.eventType }
+          : { kind: 'time', atMinutes: c.when.atMinutes };
+
+    rules.push({
+      id: `cascade-${c.id}`,
+      label: c.emit.message.length > 48 ? `${c.emit.message.slice(0, 45)}…` : c.emit.message,
+      trigger,
+      delayMinutes: c.delayMinutes,
+      once: c.once,
+      effect:
+        c.emit.blocksRoutes || c.emit.setFlags
+          ? { blocksRoutes: c.emit.blocksRoutes, setFlags: c.emit.setFlags }
+          : undefined,
+      emit: {
+        type: c.emit.type,
+        eventClass: 'system',
+        message: c.emit.message,
+        severity: c.emit.severity,
+      },
+      sourceId: c.when.kind === 'metric' ? c.when.metric : undefined,
+    });
+  }
+  return rules;
 }
 
 function applyResourceIncidents(graph: ScenarioGraph, resources: ResourceDefinition[]): void {
@@ -506,6 +560,7 @@ function compileGeneric(graph: ScenarioGraph): ScenarioConfig {
         .map((r) => r.id);
       return ids.length ? ids : [edgeId];
     }),
+    cascadeRules: compileCascadeRules(graph),
     stepModels: createGenericModels({ nominalDeliveryMinutes, totalDemandDoses: totalDemand }),
     simulation: {
       timestepMinutes: graph.timestepMinutes,
@@ -767,6 +822,7 @@ function compileColdChain(graph: ScenarioGraph): ScenarioConfig {
     routes,
     objectives,
     constraints: [...base.constraints, ...compileUserConstraints(graph)],
+    cascadeRules: [...(base.cascadeRules ?? []), ...compileCascadeRules(graph)],
     initialState: { ...base.initialState, entities, shipmentAllocations: allocations },
     simulation: {
       timestepMinutes: graph.timestepMinutes || base.simulation.timestepMinutes,

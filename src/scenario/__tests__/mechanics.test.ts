@@ -54,6 +54,38 @@ describe('cascades', () => {
     expect(cascadeEvent!.timestamp).toBe(25); // 20 + 5 delay
   });
 
+  it('a metric-triggered cascade compiles to a step-loop rule and fires with provenance', () => {
+    const g = genericLogisticsTemplate();
+    const withCascade: ScenarioGraph = {
+      ...g,
+      cascades: [
+        {
+          id: 'casc-delay',
+          when: { kind: 'metric', metric: 'delay', op: '>', value: 5 },
+          conditions: [],
+          delayMinutes: 0,
+          emit: {
+            type: 'THRESHOLD_CROSSED',
+            message: 'Delivery pressure rising — service level at risk',
+            severity: 'warning',
+          },
+          once: true,
+        },
+      ],
+    };
+    const c = compileScenarioGraph(withCascade);
+    expect(c.ok).toBe(true);
+    expect(c.scenario!.cascadeRules?.some((r) => r.id === 'cascade-casc-delay')).toBe(true);
+    const run = runSimulation(c.scenario!, EMPTY, 'continue');
+    if (!run.ok) throw new Error(run.error.message);
+    const fired = run.value.result.events.find((e) => /Delivery pressure rising/.test(e.message));
+    expect(fired).toBeDefined();
+    expect(fired!.cascade?.ruleId).toBe('cascade-casc-delay');
+    expect(fired!.cascade?.triggerKind).toBe('metric');
+    // Deterministic + bounded.
+    expect(run.value.result.cascadeFaults ?? []).toEqual([]);
+  });
+
   it('validates cascade references against the graph', () => {
     const g = blankGraph();
     const bad: ScenarioGraph = {
