@@ -146,6 +146,8 @@ export function runSimulation(
     tradeoffs: [
       { strategy: action.label, scores: toTradeoffScores(scored.contributions) },
     ],
+    cascadeFaults: trajectory.cascadeFaults,
+    firedCascadeRuleIds: trajectory.firedCascadeRuleIds,
   };
 
   return {

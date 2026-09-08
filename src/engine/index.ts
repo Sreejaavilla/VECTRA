@@ -35,6 +35,12 @@ export {
   type TrajectoryFrame,
 } from './simulator';
 export { applyTransition, type TransitionEnv } from './transitions';
+export {
+  createCascadeProcessor,
+  CASCADE_LIMITS,
+  type CascadeProcessor,
+  type CascadeFault,
+} from './cascades';
 export { framesToSteps, toEntityStates, toResourceStates } from './adapter';
 export { canonicalSerialize, deriveSeed, hashString, mulberry32 } from './rng';
 export {

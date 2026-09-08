@@ -26,6 +26,7 @@ import {
 } from '../domain';
 import { applyTransition, switchRoute, type TransitionEnv } from './transitions';
 import { mulberry32 } from './rng';
+import { createCascadeProcessor, type CascadeFault } from './cascades';
 
 export interface TrajectoryFrame {
   /** Frozen state at this step. */
@@ -37,6 +38,10 @@ export interface TrajectoryFrame {
 export interface Trajectory {
   frames: TrajectoryFrame[];
   events: SimulationEvent[];
+  /** Structured cascade-limit breaches, if any. Empty on a clean run. */
+  cascadeFaults: CascadeFault[];
+  /** Ids of cascade rules that fired at least once. */
+  firedCascadeRuleIds: string[];
 }
 
 const DEFAULT_TRAVEL_MINUTES = 60;
@@ -262,6 +267,7 @@ export function simulateTrajectory(
   const firedActionEvents = new Set<string>();
   const firedTransitions = new Set<number>();
   const crossedConstraints = new Set<string>();
+  const cascades = createCascadeProcessor(scenario.cascadeRules ?? []);
   let emitCounter = 0;
 
   const decisionTime = action.decisionTimeMinutes;
@@ -370,6 +376,17 @@ export function simulateTrajectory(
       model.step(state, { now, dt, inputs, random });
     }
 
+    /* --- 7b. cascades: event / metric / state / resource-triggered consequences.
+       Runs after the step models so it observes this step's fresh metrics; its
+       state effects (broken refrigeration, blocked routes) take hold next step,
+       exactly like an exogenous scheduled event would. --- */
+    cascades.step(state, {
+      now,
+      previous: index === 0 ? -Infinity : previous,
+      stepEvents,
+      emit,
+    });
+
     /* --- 8. threshold crossings (first time only, so the log stays readable) --- */
     for (const constraint of scenario.constraints) {
       if (constraint.scope !== 'trajectory') continue;
@@ -397,7 +414,12 @@ export function simulateTrajectory(
     if (now >= durationMinutes) break;
   }
 
-  return { frames, events: normalizeEventLog(allEvents) };
+  return {
+    frames,
+    events: normalizeEventLog(allEvents),
+    cascadeFaults: cascades.faults,
+    firedCascadeRuleIds: [...cascades.firedRuleIds],
+  };
 }
 
 function toEvent(
