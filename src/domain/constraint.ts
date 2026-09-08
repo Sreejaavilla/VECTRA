@@ -10,10 +10,14 @@
  *   trajectory — a property of the WHOLE TRAJECTORY.
  *                "temperature must never exceed 8", "viability must never fall
  *                below 30", "delay must not exceed 90".
- *                Can only be evaluated after simulating. A strategy can be
- *                statically feasible and still become infeasible in flight.
+ *                Checked at EVERY step. Can only be evaluated after simulating.
  *
- *   final feasibility = static feasibility AND trajectory feasibility
+ *   final      — a property of the LAST step only.
+ *                "service coverage must reach 1", "final viability >= 30".
+ *                A per-step check would fire falsely at t=0 (coverage starts at
+ *                0); this scope waits for the shipment to have had its chance.
+ *
+ *   final feasibility = static AND trajectory AND final
  *
  * Hard constraints determine feasibility. Soft constraints never make a
  * strategy impossible — they lower its score.
@@ -30,7 +34,7 @@ export type ConstraintOperator =
   | 'available'
   | 'unavailable';
 
-export type ConstraintScope = 'static' | 'trajectory';
+export type ConstraintScope = 'static' | 'trajectory' | 'final';
 
 export type ConstraintSeverity = 'hard' | 'soft';
 

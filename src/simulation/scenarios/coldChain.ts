@@ -65,8 +65,6 @@ const MODEL_CONFIG: ColdChainModelConfig = {
   recoveryRatePerMin: COLD_CHAIN.recoveryRatePerMin,
   degradationRate: COLD_CHAIN.degradationRate,
   nominalDeliveryMinutes: COLD_CHAIN.nominalDeliveryMinutes,
-  horizonMinutes: COLD_CHAIN.durationMinutes,
-  undeliveredDelayMinutes: 999,
   totalDemandDoses: TOTAL_DEMAND,
   riskBands: { low: 85, moderate: 70, high: 50 },
 };
@@ -201,6 +199,22 @@ const routes: Route[] = [
       { x: 46, y: 52 },
       { x: 70, y: 52 },
       { x: 88, y: 46 },
+    ],
+  },
+  /* --- Detour used by an intervention when the primary corridor is blocked:
+     an intercepted truck loops south around the blockage to the hospitals. --- */
+  {
+    id: 'route-intercept-detour',
+    from: 'support-depot',
+    to: 'hospital-a',
+    kind: 'emergency',
+    travelTimeMinutes: 52,
+    continuesTo: 'route-hospital-a-hospital-b',
+    waypoints: [
+      { x: 66, y: 18 },
+      { x: 72, y: 32 },
+      { x: 82, y: 28 },
+      { x: 88, y: 12 },
     ],
   },
   /* --- Regional Cold Store B corridor: the alternate reroute path --- */
@@ -391,16 +405,29 @@ const constraints: ConstraintDefinition[] = [
   },
   {
     // A shipment that never reaches a hospital fails, no matter how cold it
-    // stayed. `delay` carries a 999 sentinel at the horizon for anything still
-    // in transit, so this rejects "held at a blockage forever".
-    id: 'constraint-delivery-completed',
-    type: 'delay',
-    label: 'Delivery completed within the horizon',
+    // stayed. Evaluated at the LAST step only — coverage is legitimately below
+    // 1 at every earlier step.
+    id: 'constraint-final-coverage',
+    type: 'service',
+    label: 'Full delivery on completion',
     severity: 'hard',
-    scope: 'trajectory',
-    operator: '<=',
-    value: 240,
-    appliesTo: 'delay',
+    scope: 'final',
+    operator: '>=',
+    value: 0.999,
+    appliesTo: 'serviceCoverage',
+  },
+  {
+    // Demonstrates the final scope on a second metric. Same floor as the
+    // per-step viability rule, so it never independently changes an outcome —
+    // it just proves final-state checks compose.
+    id: 'constraint-final-viability',
+    type: 'viability',
+    label: 'Usable viability on delivery',
+    severity: 'hard',
+    scope: 'final',
+    operator: '>=',
+    value: 25,
+    appliesTo: 'viability',
   },
   {
     id: 'constraint-safe-temperature',
@@ -539,11 +566,52 @@ const storageTransferHandler: ActionDefinition['apply'] = (state, ctx) => {
   truck.status = 'en_route';
 };
 
+/**
+ * If the truck's current corridor has been blocked, loop it onto the southern
+ * detour to the hospitals. Used by any intervention that has already restored
+ * cargo cooling — recovery first, then an alternate route, then delivery.
+ * Books a one-time detour cost so a blockage-forced reroute is genuinely more
+ * expensive than the clean version of the same strategy.
+ */
+function divertTruckIfBlocked(
+  state: SimulationState,
+  ctx: Parameters<NonNullable<ActionDefinition['apply']>>[1],
+  detourRupees: number,
+): void {
+  const truck = state.entities['truck-01'];
+  if (!truck || !truck.routeId || state.flags['detour:taken']) return;
+  if (state.flags[`route-blocked:${truck.routeId}`] == null) return;
+
+  state.flags['detour:taken'] = ctx.now;
+  switchRoute(state, 'truck-01', 'route-intercept-detour', transitionEnv);
+  truck.status = 'recovering';
+  state.flags['spend:res-budget'] =
+    (Number(state.flags['spend:res-budget']) || 0) + detourRupees;
+  const budget = state.resources['res-budget'];
+  if (budget) budget.quantity = Math.max(0, budget.quantity - detourRupees / 100000);
+  ctx.emit({
+    id: 'detour',
+    type: 'REROUTE',
+    eventClass: 'decision',
+    entityId: 'truck-01',
+    routeId: 'route-intercept-detour',
+    message: 'Primary corridor blocked — intercepted shipment loops onto the southern detour',
+    severity: 'warning',
+    focusEntityId: 'truck-01',
+  });
+}
+
 /** Emergency interception: one vehicle re-cools the whole load, over capacity. */
 const interceptionHandler: ActionDefinition['apply'] = (state, ctx) => {
   const support = state.entities['support-01'];
   const truck = state.entities['truck-01'];
-  if (!support || !truck || state.flags['intercept:done']) return;
+  if (!support || !truck) return;
+
+  // After the intercept, keep checking whether the onward corridor is passable.
+  if (state.flags['intercept:done']) {
+    divertTruckIfBlocked(state, ctx, 60000);
+    return;
+  }
   if (support.routeId !== 'route-emergency' || support.progress < 1) return;
 
   state.flags['intercept:done'] = ctx.now;
@@ -577,6 +645,7 @@ const interceptionHandler: ActionDefinition['apply'] = (state, ctx) => {
     severity: 'info',
     focusEntityId: 'truck-01',
   });
+  divertTruckIfBlocked(state, ctx, 60000);
 };
 
 /**
@@ -594,6 +663,9 @@ const hybridHandler: ActionDefinition['apply'] = (state, ctx) => {
   const support = state.entities['support-01'];
   const truck = state.entities['truck-01'];
   if (!support || !truck) return;
+
+  // Once the truck portion is re-cooled, loop it around a blocked corridor too.
+  if (state.flags['hybrid:split']) divertTruckIfBlocked(state, ctx, 40000);
 
   if (!state.flags['hybrid:split']) {
     if (support.routeId !== 'route-emergency' || support.progress < 1) return;
@@ -1063,10 +1135,10 @@ export const DEMO_SCENARIOS: DemoScenario[] = [
     id: 'route-blockage',
     label: '2 · Route blockage',
     summary:
-      'Refrigeration fails, then the primary corridor to Hospital A is blocked at minute 48. Anything still on it is stranded.',
+      'Refrigeration fails, then the primary corridor to Hospital A is blocked at minute 48. Continue is stranded; Reroute, Emergency (via detour) and Hybrid all remain viable with different cost / speed / viability trade-offs.',
     disruption: { routeBlockage: { routeId: 'route-hub-hospital-a', atMinutes: 48 } },
     controls: { safetyPriority: 40 },
-    expectWinner: 'reroute_storage',
+    expectWinner: 'hybrid',
   },
   {
     id: 'no-support-vehicle',

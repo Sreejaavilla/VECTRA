@@ -14,6 +14,7 @@ export { analyzeSensitivity, type SensitivityOptions } from './sensitivity';
 export {
   checkStaticFeasibility,
   evaluateTrajectoryConstraints,
+  evaluateFinalConstraints,
   isTrajectoryFeasible,
   validateInputs,
   validateScenario,

@@ -309,6 +309,47 @@ function format(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
+/**
+ * Final-state constraints are tested against the LAST step only. This is the
+ * clean home for "the shipment must actually have been delivered" — a metric
+ * like service coverage is legitimately unsatisfied at every step until the end.
+ */
+export function evaluateFinalConstraints(
+  steps: readonly SimulationStep[],
+  constraints: readonly ConstraintDefinition[],
+  inputs: SimulationInputs,
+): ConstraintViolation[] {
+  const last = steps[steps.length - 1];
+  if (!last) return [];
+  const violations: ConstraintViolation[] = [];
+
+  for (const constraint of constraints) {
+    if (constraint.scope !== 'final') continue;
+    const expected = resolveConstraintValue(constraint.id, constraint.value, inputs);
+    const actual = last.metrics[constraint.appliesTo as keyof typeof last.metrics];
+    if (actual == null) continue;
+    if (satisfies(constraint.operator, actual, expected)) continue;
+    violations.push({
+      constraintId: constraint.id,
+      label: constraint.label,
+      severity: constraint.severity,
+      scope: 'final',
+      actual,
+      expected,
+      atMinutes: last.timestamp,
+      message: `${constraint.label}: ended at ${format(
+        typeof actual === 'number' ? actual : 0,
+      )} (required ${constraint.operator} ${String(expected)})`,
+    });
+  }
+
+  return violations;
+}
+
+/** Post-simulation feasibility: no hard violation from either the trajectory or
+ *  the final-state checks. */
 export function isTrajectoryFeasible(violations: readonly ConstraintViolation[]): boolean {
-  return !violations.some((v) => v.scope === 'trajectory' && v.severity === 'hard');
+  return !violations.some(
+    (v) => (v.scope === 'trajectory' || v.scope === 'final') && v.severity === 'hard',
+  );
 }

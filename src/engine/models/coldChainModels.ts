@@ -30,10 +30,6 @@ export interface ColdChainModelConfig {
   degradationRate: number;
   /** Nominal delivery minute used as the zero point for delay. */
   nominalDeliveryMinutes: number;
-  /** End of the simulation horizon — a shipment still moving here never arrived. */
-  horizonMinutes: number;
-  /** Delay reported for a shipment that never completes delivery. */
-  undeliveredDelayMinutes: number;
   /** Total demand across all hospitals, for the service-coverage metric. */
   totalDemandDoses: number;
   /** Viability bands, descending, mapped to risk scores 1..4. */
@@ -172,12 +168,9 @@ export function createDelayModel(config: ColdChainModelConfig): StepModel {
         state.metrics.delay = Math.max(0, last - config.nominalDeliveryMinutes);
         return;
       }
-      // A shipment still in transit at the end of the horizon never arrived —
-      // report an unbounded delay so a hard delivery constraint can reject it.
-      if (ctx.now >= config.horizonMinutes - 1e-6) {
-        state.metrics.delay = config.undeliveredDelayMinutes;
-        return;
-      }
+      // Still in transit. Delay is just elapsed-vs-nominal; a shipment that
+      // never arrives is caught by the final service-coverage constraint, not
+      // by a delay sentinel.
       state.metrics.delay = Math.max(0, ctx.now - config.nominalDeliveryMinutes);
     },
   };
