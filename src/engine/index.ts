@@ -12,6 +12,12 @@ export { evaluateScenario, expandAction } from './candidateEvaluator';
 export { recommend, type ScoredCandidate } from './recommendation';
 export { analyzeSensitivity, type SensitivityOptions } from './sensitivity';
 export {
+  costOfWaiting,
+  type CostOfWaitingReport,
+  type CostOfWaitingOptions,
+  type WaitRow,
+} from './costOfWaiting';
+export {
   checkStaticFeasibility,
   evaluateTrajectoryConstraints,
   evaluateFinalConstraints,
