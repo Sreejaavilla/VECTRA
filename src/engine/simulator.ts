@@ -321,6 +321,7 @@ export function simulateTrajectory(
             ),
           );
         },
+        parameterValues: action.parameterValues,
       };
       action.apply(state, ctx);
     }

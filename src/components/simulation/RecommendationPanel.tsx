@@ -75,6 +75,11 @@ export function RecommendationPanel({
           <span className={`${styles.winnerScore} u-mono`}>
             score {recommendation.score.toFixed(3)}
           </span>
+          {recommendation.chosenParameters && (
+            <span className={styles.config}>
+              {formatParameters(recommendation.chosenParameters)}
+            </span>
+          )}
         </button>
 
         <Breakdown recommendation={recommendation} />
@@ -118,6 +123,25 @@ export function RecommendationPanel({
       </div>
     </section>
   );
+}
+
+/** "decided at minute 36" — the swept parameter the engine settled on. */
+function formatParameters(params: Record<string, number | string | boolean>): string {
+  return Object.keys(params)
+    .sort()
+    .map((key) => {
+      const value = params[key];
+      if (key === 'decisionTimeMinutes') return `decided at minute ${value}`;
+      return `${humanize(key)} ${value}`;
+    })
+    .join(' · ');
+}
+
+function humanize(key: string): string {
+  return key
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/^./, (c) => c.toLowerCase())
+    .trim();
 }
 
 function Breakdown({ recommendation }: { recommendation: Recommendation }) {

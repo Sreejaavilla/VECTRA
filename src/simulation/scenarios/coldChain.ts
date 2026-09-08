@@ -593,6 +593,12 @@ const actions: ActionDefinition[] = [
     id: 'emergency_interception',
     label: 'Emergency Interception',
     decisionTimeMinutes: 40,
+    parameters: {
+      decisionTimeMinutes: {
+        type: 'number',
+        values: [36, 38, 40, 42, 44],
+      },
+    },
     preconditions: [
       {
         kind: 'resource',
@@ -649,6 +655,12 @@ const actions: ActionDefinition[] = [
     // time, just differently. Holding the decision time equal is what makes the
     // comparison between the two a comparison of the DECISION, not of latency.
     decisionTimeMinutes: 40,
+    parameters: {
+      decisionTimeMinutes: {
+        type: 'number',
+        values: [36, 38, 40, 42, 44],
+      },
+    },
     preconditions: [
       {
         kind: 'resource',

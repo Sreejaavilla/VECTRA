@@ -95,6 +95,8 @@ export interface ActionContext {
   random: () => number;
   /** Queue an extra event. The engine assigns ids and ordering. */
   emit: (event: Omit<ActionEventTemplate, 'atOffsetMinutes'>) => void;
+  /** The specific values assigned to the parameters for this instance, if any */
+  parameterValues?: Record<string, number | string | boolean>;
 }
 
 export interface TransitionResult {
@@ -107,8 +109,15 @@ export type ActionHandler = (
   ctx: ActionContext,
 ) => TransitionResult | void;
 
+export interface ActionParameter {
+  type: 'number' | 'string' | 'boolean';
+  values: (number | string | boolean)[];
+}
+
 export interface ActionDefinition {
   id: string;
+  /** Group parameterized variants together */
+  baseId?: string;
   label: string;
   /** Simulation minute at which the operator takes this decision. */
   decisionTimeMinutes: number;
@@ -120,6 +129,9 @@ export interface ActionDefinition {
   apply?: ActionHandler;
   emittedEvents: ActionEventTemplate[];
   costModel: CostModel;
+  parameters?: Record<string, ActionParameter>;
+  /** The specific values assigned to the parameters for this instance */
+  parameterValues?: Record<string, number | string | boolean>;
 }
 
 /** Fixed cost of an action given the resources it consumes. */

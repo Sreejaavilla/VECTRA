@@ -8,7 +8,7 @@
  */
 
 export { runSimulation, ENGINE_VERSION, type RunOutput } from './runner';
-export { evaluateScenario } from './candidateEvaluator';
+export { evaluateScenario, expandAction } from './candidateEvaluator';
 export { recommend, type ScoredCandidate } from './recommendation';
 export { analyzeSensitivity, type SensitivityOptions } from './sensitivity';
 export {

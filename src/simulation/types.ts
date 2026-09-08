@@ -91,6 +91,12 @@ export interface Recommendation {
   reasons: RecommendationReason[];
   tradeoffs: TradeoffRow[];
   rejectedAlternatives: RejectedAlternative[];
+  /**
+   * When the winning action was parameterized, the specific configuration the
+   * engine selected — the answer to "what settings, not just which strategy".
+   * Absent for plain (unparameterized) actions.
+   */
+  chosenParameters?: Record<string, number | string | boolean>;
 }
 
 /** The whole decision space for one set of inputs. */
@@ -167,6 +173,13 @@ export interface SimulationResult {
   tradeoffs?: TradeoffRow[];
   /** Set only on results produced through `evaluateScenario`. */
   recommendation?: Recommendation;
+  /**
+   * When this result is the best variant of a parameterized action, the
+   * parameter values that produced it. Absent for plain actions. The `strategy`
+   * id is always the base action id — the swept variant ids never leave the
+   * engine.
+   */
+  chosenParameters?: Record<string, number | string | boolean>;
 }
 
 /** Narrative summary of the run at a point in time. NOT authoritative state. */
