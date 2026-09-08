@@ -15,7 +15,22 @@ export {
   type DemoControls,
 } from './scenarios/coldChain';
 export {
+  flagshipScenario,
+  makeFlagshipScenario,
+  FLAGSHIP,
+  FLAGSHIP_OBJECTIVE_IDS,
+  FLAGSHIP_STRATEGY_LABELS,
+  type FlagshipOptions,
+} from './scenarios/flagship';
+export {
+  buildCausalChain,
+  primaryCausalPath,
+  type CausalNode,
+  type CausalNodeKind,
+} from './causalChain';
+export {
   analyzeSensitivity,
+  costOfWaiting,
   evaluateScenario,
   runSimulation,
   ENGINE_VERSION,
@@ -25,6 +40,9 @@ export {
   type EngineError,
   type EngineResult,
   type RunOutput,
+  type CostOfWaitingReport,
+  type CostOfWaitingOptions,
+  type WaitRow,
 } from '../engine';
 export {
   useSimulationPlayback,

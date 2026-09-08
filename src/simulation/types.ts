@@ -171,6 +171,10 @@ export interface SimulationResult {
   decisionImpact?: DecisionImpact;
   sensitivity?: SensitivityDriver[];
   tradeoffs?: TradeoffRow[];
+  /** Structured cascade-limit breaches during this run. Empty on a clean run. */
+  cascadeFaults?: { kind: string; ruleId: string; atMinutes: number; message: string }[];
+  /** Cascade rule ids that fired at least once during this run. */
+  firedCascadeRuleIds?: string[];
   /** Set only on results produced through `evaluateScenario`. */
   recommendation?: Recommendation;
   /**

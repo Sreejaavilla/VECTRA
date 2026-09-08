@@ -34,6 +34,28 @@ export const DECISION_TYPES: readonly string[] = [
 
 export type EventSeverity = 'info' | 'warning' | 'critical';
 
+/**
+ * Provenance for an event a cascade rule generated. Retained so causal
+ * visualization never has to reconstruct "why did this happen" from message
+ * strings — every field here is real state the engine acted on.
+ */
+export interface CascadeProvenance {
+  /** Stable id of the CascadeRule that fired. */
+  ruleId: string;
+  /** Human-readable description of what satisfied the trigger. */
+  trigger: string;
+  /** The trigger discriminant: 'time' | 'event' | 'metric' | 'state' | 'resource'. */
+  triggerKind: string;
+  /** Entity/route/resource/metric the trigger observed. */
+  sourceId?: string;
+  /** Entity/route the effect changed. */
+  affectedId?: string;
+  /** Id of the upstream event that armed this rule, when trigger was 'event'. */
+  causeEventId?: string;
+  /** Cascade recursion depth at which this fired (0 = first generation). */
+  depth: number;
+}
+
 export interface SimulationEvent {
   id: string;
   /** Simulation minutes from t0. */
@@ -51,6 +73,8 @@ export interface SimulationEvent {
   severity?: EventSeverity;
   /** Hint: which entity the view should emphasize when this event fires. */
   focusEntityId?: string;
+  /** Present when a CascadeRule generated this event. */
+  cascade?: CascadeProvenance;
 }
 
 export function isDecisionType(type: string): boolean {

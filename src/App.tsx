@@ -20,7 +20,25 @@ import {
   type CompileResult,
   type ScenarioGraph,
 } from './scenario';
+import { flagshipScenario } from './simulation';
 import ClassicApp from './ClassicApp';
+
+/** The flagship demo is a hand-authored ScenarioConfig (multi-shipment
+ *  contention). It skips the graph builder and runs straight in the console
+ *  through the same engine every other scenario uses. */
+const FLAGSHIP_COMPILED: CompileResult = {
+  ok: true,
+  scenario: flagshipScenario,
+  errors: [],
+  info: {
+    domainModel: 'cold-chain',
+    facilities: flagshipScenario.facilities.length,
+    routes: flagshipScenario.routes.length,
+    shipments: 3,
+    primaryShipmentId: 'ship-a',
+    alternatePaths: 0,
+  },
+};
 import styles from './App.module.css';
 
 type Mode = 'launch' | 'build' | 'live';
@@ -65,6 +83,14 @@ function PlatformApp() {
               Logistics template
             </button>
             <button
+              onClick={() => {
+                setCompiled(FLAGSHIP_COMPILED);
+                setMode('live');
+              }}
+            >
+              Flagship · multi-shipment contention
+            </button>
+            <button
               className={styles.launchGhost}
               onClick={() => {
                 setGraph(blankGraph());
@@ -98,8 +124,8 @@ function PlatformApp() {
     <LiveConsole
       key={compiled?.scenario?.id + String(compiled?.scenario?.version)}
       userScenario={compiled?.scenario}
-      scenarioName={graph.name}
-      onEditScenario={() => setMode('build')}
+      scenarioName={compiled?.scenario?.title ?? graph.name}
+      onEditScenario={() => setMode(compiled === FLAGSHIP_COMPILED ? 'launch' : 'build')}
     />
   );
 }

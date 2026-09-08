@@ -68,6 +68,73 @@ export interface ScheduledEvent {
   blocksRoutes?: string[];
 }
 
+/* --------------------------------------------------------------------------- *
+ * Cascades — declarative consequence rules. The engine evaluates them inside
+ * the existing simulation loop; they are NOT a parallel simulator. A rule is
+ *
+ *   TRIGGER -> (CONDITIONS) -> DELAY -> STATE EFFECT -> NEW EVENT
+ *
+ * and every step it produces is a real state mutation and/or a real event.
+ * --------------------------------------------------------------------------- */
+
+export type CascadeTriggerKind = 'time' | 'event' | 'metric' | 'state' | 'resource';
+
+export interface CascadeTrigger {
+  kind: CascadeTriggerKind;
+  /** kind:'time' — fire at this minute (crossing semantics). */
+  atMinutes?: number;
+  /** kind:'event' — fire when an event of this type is emitted. */
+  eventType?: SimulationEventType;
+  /** kind:'metric' — the metric key to watch. */
+  metric?: MetricKey | string;
+  /** kind:'state' — the flag to watch (numeric flags only for comparison). */
+  flag?: string;
+  /** kind:'metric'|'state' — comparison against `threshold`. */
+  operator?: '<' | '<=' | '>' | '>=' | '=';
+  threshold?: number;
+  /** kind:'resource' — the resource to watch. */
+  resourceId?: string;
+  resourceStatus?: 'available' | 'unavailable' | 'depleted' | 'allocated';
+  /** Optional additional flag gate (must be truthy/non-zero for the rule to fire). */
+  whenFlag?: string;
+}
+
+export interface CascadeEffect {
+  setFlags?: Record<string, boolean | number | string>;
+  breaksRefrigeration?: string[];
+  blocksRoutes?: string[];
+  /** Additive nudge to a live metric (e.g. delivery pressure raising `delay`). */
+  adjustMetric?: { metric: MetricKey | string; delta: number };
+}
+
+export interface CascadeEmit {
+  type: SimulationEventType;
+  eventClass: EventClass;
+  message: string;
+  severity?: EventSeverity;
+  entityId?: string;
+  routeId?: string;
+  resourceId?: string;
+  focusEntityId?: string;
+}
+
+export interface CascadeRule {
+  id: string;
+  /** Short label for causal-chain display. */
+  label: string;
+  trigger: CascadeTrigger;
+  /** Minutes to wait after the trigger before applying effect/emit. */
+  delayMinutes?: number;
+  /** Fire at most once. Default true. A false value re-arms on threshold re-crossing. */
+  once?: boolean;
+  effect?: CascadeEffect;
+  emit?: CascadeEmit;
+  /** Id of the object the trigger observes — provenance only. */
+  sourceId?: string;
+  /** Id of the object the effect changes — provenance only. */
+  affectedId?: string;
+}
+
 export interface ScenarioConfig {
   id: string;
   version: number;
@@ -91,6 +158,8 @@ export interface ScenarioConfig {
   /* --- dynamics --- */
   initialState: InitialStateConfig;
   scheduledEvents: ScheduledEvent[];
+  /** Declarative cascade rules, evaluated inside the main simulation loop. */
+  cascadeRules?: CascadeRule[];
   stepModels: StepModel[];
   simulation: SimulationConfig;
 }
