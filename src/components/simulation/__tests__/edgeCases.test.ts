@@ -1,14 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import type { ScenarioConfig, SimulationResult } from '../../../simulation/types';
-import { coldChainScenario } from '../../../simulation/mockEngine';
+import { coldChainScenario } from '../../../simulation/scenarios/coldChain';
 import { getStateAtTime, getMetricSeries, getNarrativePhase } from '../../../simulation/selectors';
 
 function makeResult(overrides: Partial<SimulationResult>): SimulationResult {
   const scenario: ScenarioConfig = coldChainScenario;
   const base: SimulationResult = {
-    run: { runId: 'run-001', runNumber: 1, label: 'Test', inputs: {}, seed: 1 },
+    run: {
+      runId: 'run-001',
+      runNumber: 1,
+      label: 'Test',
+      inputs: {},
+      structuredInputs: { resources: {}, constraints: {}, priorities: {} },
+      seed: 1,
+      engineVersion: 'test',
+      schemaVersion: 2,
+    },
     scenario,
     strategy: 'continue',
+    strategyLabel: 'Continue Delivery',
     duration: 10,
     steps: [
       { timestamp: 0, entities: [], resources: [], metrics: { viability: 100 }, events: [] },
@@ -16,6 +26,14 @@ function makeResult(overrides: Partial<SimulationResult>): SimulationResult {
     ],
     events: [],
     outcome: { strategy: 'Test', status: 'success', summary: 'ok', finalMetrics: {} },
+    feasibility: {
+      strategyId: 'continue',
+      staticFeasible: true,
+      trajectoryFeasible: true,
+      feasible: true,
+      violations: [],
+    },
+    violations: [],
   };
   return { ...base, ...overrides };
 }

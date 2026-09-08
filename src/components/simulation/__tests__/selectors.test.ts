@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { coldChainScenario, runMockSimulation } from '../../../simulation/mockEngine';
+import { run } from '../../../engine/__tests__/fixtures';
 import {
   classifyEvent,
   formatSimulationTime,
@@ -11,7 +11,7 @@ import {
   FOCUS_WINDOW_MINUTES,
 } from '../../../simulation/selectors';
 
-const result = runMockSimulation(coldChainScenario, 'emergency_interception');
+const result = run('emergency_interception');
 
 describe('formatSimulationTime', () => {
   it('formats minutes as HH:MM', () => {

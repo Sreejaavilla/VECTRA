@@ -3,7 +3,9 @@ import styles from './SensitivityBars.module.css';
 
 export function SensitivityBars({ drivers }: { drivers: SensitivityDriver[] }) {
   if (drivers.length === 0) return null;
-  const max = Math.max(...drivers.map((d) => d.weight));
+  // A driver with zero influence is a real result, so guard the divisor rather
+  // than dropping the row.
+  const max = Math.max(...drivers.map((d) => d.weight), 1e-9);
 
   return (
     <ul className={styles.list}>

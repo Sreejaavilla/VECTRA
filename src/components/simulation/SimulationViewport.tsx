@@ -7,7 +7,11 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
-import type { SimulationEvent, SimulationResult } from '../../simulation/types';
+import type {
+  ScenarioEvaluation,
+  SimulationEvent,
+  SimulationResult,
+} from '../../simulation/types';
 import { useSimulationPlayback } from '../../simulation/useSimulationPlayback';
 import {
   getEventsUpTo,
@@ -24,6 +28,8 @@ import { EventFeed } from './EventFeed';
 import { DecisionImpactPanel } from './DecisionImpactPanel';
 import { RunIdentityBar } from './RunIdentityBar';
 import { ComparisonView } from './ComparisonView';
+import { RecommendationPanel } from './RecommendationPanel';
+import { SensitivityPanel } from './SensitivityPanel';
 import { DebugOverlay } from './DebugOverlay';
 import styles from './SimulationViewport.module.css';
 
@@ -32,6 +38,11 @@ interface SimulationViewportProps {
   isSimulating?: boolean;
   error?: string | null;
   comparisonResults?: SimulationResult[];
+  /** Present when the whole decision space was evaluated, not one strategy. */
+  evaluation?: ScenarioEvaluation | null;
+  isAnalyzingSensitivity?: boolean;
+  onAnalyzeSensitivity?: () => void;
+  onSelectStrategy?: (strategyId: string) => void;
   onReplay: () => void;
   onRequestCompare?: () => void;
   canCompare?: boolean;
@@ -42,6 +53,10 @@ export function SimulationViewport({
   isSimulating = false,
   error = null,
   comparisonResults,
+  evaluation = null,
+  isAnalyzingSensitivity = false,
+  onAnalyzeSensitivity,
+  onSelectStrategy,
   onReplay,
   onRequestCompare,
   canCompare,
@@ -200,7 +215,29 @@ export function SimulationViewport({
         />
       </div>
 
-      <DecisionImpactPanel impact={result.decisionImpact ?? null} scenario={result.scenario} reveal={decisionReveal} />
+      <div className={`${styles.decisionRow} ${evaluation ? styles.decisionRowSplit : ''}`}>
+        <DecisionImpactPanel
+          impact={result.decisionImpact ?? null}
+          scenario={result.scenario}
+          reveal={decisionReveal}
+        />
+        {evaluation && (
+          <RecommendationPanel
+            evaluation={evaluation}
+            activeStrategyId={result.strategy}
+            onSelectStrategy={onSelectStrategy}
+          />
+        )}
+      </div>
+
+      {evaluation && (
+        <SensitivityPanel
+          report={evaluation.sensitivity ?? null}
+          scenario={result.scenario}
+          isAnalyzing={isAnalyzingSensitivity}
+          onAnalyze={onAnalyzeSensitivity}
+        />
+      )}
 
       <div className={styles.charts}>
         <section className={`panel ${styles.chartPanel}`}>

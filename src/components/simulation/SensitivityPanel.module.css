@@ -1,0 +1,93 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.cost {
+  font-size: var(--fs-label);
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+.runBtn {
+  background: none;
+  border: 1px solid var(--panel-border-strong);
+  border-radius: var(--radius-s);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--fs-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  padding: 3px 9px;
+  cursor: pointer;
+  transition: color 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+.runBtn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.runBtn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.empty,
+.note {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.empty {
+  font-size: var(--fs-body);
+  color: var(--text-1);
+}
+
+/* --- flip points --- */
+
+.flips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.flips li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  background: var(--bg-2);
+  border: 1px solid var(--panel-border);
+  border-left: 2px solid var(--decision);
+  border-radius: var(--radius-s);
+}
+.flipInput {
+  font-size: var(--fs-body);
+  color: var(--text-1);
+  min-width: 0;
+}
+.flipInput strong {
+  color: var(--text-0);
+  font-weight: 600;
+}
+.flipArrow {
+  color: var(--text-2);
+  font-size: 12px;
+}
+.flipTo {
+  font-size: var(--fs-body);
+  color: var(--decision);
+  font-weight: 600;
+  text-align: right;
+}
