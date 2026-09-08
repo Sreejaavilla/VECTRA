@@ -82,6 +82,33 @@ function toInputs(c: Controls): SimulationInputs {
   };
 }
 
+/** Drop overrides the scenario does not declare (a generic user scenario has
+ *  no `res-cold-storage`, no `constraint-critical-temperature`, etc.). */
+function sanitizeInputs(scenario: ScenarioConfig, inputs: SimulationInputs): SimulationInputs {
+  const resourceIds = new Set(scenario.resources.map((r) => r.id));
+  const constraintIds = new Set(scenario.constraints.map((c) => c.id));
+  const objectiveIds = new Set(scenario.objectives.map((o) => o.id));
+  const resources: SimulationInputs['resources'] = {};
+  for (const [k, v] of Object.entries(inputs.resources)) if (resourceIds.has(k)) resources[k] = v;
+  const constraints: SimulationInputs['constraints'] = {};
+  for (const [k, v] of Object.entries(inputs.constraints)) if (constraintIds.has(k)) constraints[k] = v;
+  // Re-map the safety slider onto whatever the scenario's "protect the product"
+  // objective is called (obj-safety for pharma, obj-service for generic).
+  const priorities = { ...inputs.priorities };
+  if (!objectiveIds.has('obj-safety') && objectiveIds.has('obj-service')) {
+    priorities['obj-service'] = priorities['obj-safety'] ?? 0;
+    delete priorities['obj-safety'];
+  }
+  const known: Record<string, number> = {};
+  for (const [k, v] of Object.entries(priorities)) if (objectiveIds.has(k)) known[k] = v;
+  const total = Object.values(known).reduce((a, b) => a + b, 0);
+  const normalized =
+    total > 0
+      ? Object.fromEntries(Object.entries(known).map(([k, v]) => [k, v / total]))
+      : Object.fromEntries([...objectiveIds].map((id) => [id, 1 / objectiveIds.size]));
+  return { resources, constraints, priorities: normalized };
+}
+
 const BASE_CONTROLS: Controls = {
   safetyPriority: 45,
   maxTempC: DEFAULT_MAX_TEMP_C,
@@ -91,9 +118,35 @@ const BASE_CONTROLS: Controls = {
 
 /** The stable "normal operations" baseline: no failure, shipment delivers fine. */
 const BASELINE_SCENARIO = makeColdChainScenario({ refrigerationFailureAtMinutes: null });
-function baselineResult(): SimulationResult | null {
-  const r = runSimulation(BASELINE_SCENARIO, toInputs(BASE_CONTROLS), 'monitor', { runNumber: 0 });
+
+/** The do-nothing action id for a scenario (a real no-op, else the first action). */
+function baselineActionId(scenario: ScenarioConfig): string {
+  return (
+    scenario.actions.find((a) => a.id === 'monitor')?.id ??
+    scenario.actions.find((a) => a.id === 'continue')?.id ??
+    scenario.actions[0]?.id ??
+    'continue'
+  );
+}
+
+function baselineResultFor(scenario: ScenarioConfig): SimulationResult | null {
+  const r = runSimulation(scenario, sanitizeInputs(scenario, toInputs(BASE_CONTROLS)), baselineActionId(scenario), {
+    runNumber: 0,
+  });
   return r.ok ? r.value.result : null;
+}
+
+/** Earliest disruptive scheduled event in a compiled user scenario. */
+function firstIncident(
+  scenario: ScenarioConfig,
+): { type: IncidentType; atMinutes: number } | null {
+  const disruptive = scenario.scheduledEvents
+    .filter((e) => e.type === 'FAILURE' || e.type === 'CONSTRAINT_VIOLATED')
+    .sort((a, b) => a.atMinutes - b.atMinutes)[0];
+  if (!disruptive) return null;
+  const type: IncidentType =
+    disruptive.type === 'FAILURE' ? 'refrigeration-failure' : 'route-blockage';
+  return { type, atMinutes: disruptive.atMinutes };
 }
 
 export interface LiveOperations {
@@ -120,14 +173,29 @@ export interface LiveOperations {
   setMaxTempC: (v: number) => void;
 }
 
-export function useLiveOperations(): LiveOperations {
+export interface LiveOperationsOptions {
+  /** A compiled user-authored scenario. When present, live ops runs THIS
+   *  scenario (incidents already scheduled) instead of the pharma default. */
+  userScenario?: ScenarioConfig;
+}
+
+export function useLiveOperations(options: LiveOperationsOptions = {}): LiveOperations {
+  const userScenario = options.userScenario ?? null;
+  const initialScenario = userScenario ?? BASELINE_SCENARIO;
+
   const [controls, setControls] = useState<Controls>(BASE_CONTROLS);
-  const [phase, setPhase] = useState<LivePhase>('NORMAL');
-  const [scenario, setScenario] = useState<ScenarioConfig>(BASELINE_SCENARIO);
-  const [result, setResult] = useState<SimulationResult | null>(baselineResult);
-  const [doNothing, setDoNothing] = useState<SimulationResult | null>(null);
+  const [phase, setPhase] = useState<LivePhase>(userScenario ? 'INCIDENT' : 'NORMAL');
+  const [scenario, setScenario] = useState<ScenarioConfig>(initialScenario);
+  const [result, setResult] = useState<SimulationResult | null>(() =>
+    baselineResultFor(initialScenario),
+  );
+  const [doNothing, setDoNothing] = useState<SimulationResult | null>(() =>
+    userScenario ? baselineResultFor(userScenario) : null,
+  );
   const [evaluation, setEvaluation] = useState<ScenarioEvaluation | null>(null);
-  const [incident, setIncident] = useState<{ type: IncidentType; atMinutes: number } | null>(null);
+  const [incident, setIncident] = useState<{ type: IncidentType; atMinutes: number } | null>(
+    userScenario ? firstIncident(userScenario) : null,
+  );
   const [startTime, setStartTime] = useState(0);
   const [autoPlay, setAutoPlay] = useState(true);
   const [recommendationChanged, setRecommendationChanged] = useState(false);
@@ -149,17 +217,18 @@ export function useLiveOperations(): LiveOperations {
   const start = useCallback(() => {
     if (analyzeTimer.current) clearTimeout(analyzeTimer.current);
     if (flashTimer.current) clearTimeout(flashTimer.current);
+    const s = userScenario ?? BASELINE_SCENARIO;
     setControls(BASE_CONTROLS);
-    setScenario(BASELINE_SCENARIO);
-    setDoNothing(null);
+    setScenario(s);
+    setDoNothing(userScenario ? baselineResultFor(userScenario) : null);
     setEvaluation(null);
-    setIncident(null);
+    setIncident(userScenario ? firstIncident(userScenario) : null);
     setRecommendationChanged(false);
     setStartTime(0);
     setAutoPlay(true);
-    setPhase('NORMAL');
-    setResult(baselineResult());
-  }, []);
+    setPhase(userScenario ? 'INCIDENT' : 'NORMAL');
+    setResult(baselineResultFor(s));
+  }, [userScenario]);
 
   const reset = useCallback(() => start(), [start]);
 
@@ -183,7 +252,7 @@ export function useLiveOperations(): LiveOperations {
       }
 
       const s = makeColdChainScenario(disruption);
-      const dn = runSimulation(s, toInputs(next), 'continue', { runNumber: nextRun() });
+      const dn = runSimulation(s, sanitizeInputs(s, toInputs(next)), 'continue', { runNumber: nextRun() });
 
       if (flashTimer.current) clearTimeout(flashTimer.current);
       if (analyzeTimer.current) clearTimeout(analyzeTimer.current);
@@ -209,7 +278,7 @@ export function useLiveOperations(): LiveOperations {
 
   const runEvaluation = useCallback(
     (s: ScenarioConfig, c: Controls) => {
-      const out = evaluateScenario(s, toInputs(c), { runNumber: nextRun() });
+      const out = evaluateScenario(s, sanitizeInputs(s, toInputs(c)), { runNumber: nextRun() });
       return out.ok ? out.value : null;
     },
     [],

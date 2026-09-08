@@ -24,7 +24,7 @@ import {
   type IncidentType,
 } from '../../simulation/useLiveOperations';
 import { useNarration } from '../../simulation/useNarration';
-import type { SimulationResult } from '../../simulation/types';
+import type { ScenarioConfig, SimulationResult } from '../../simulation/types';
 import { OperationalMap } from '../simulation/OperationalMap';
 import { DecisionImpactPanel } from '../simulation/DecisionImpactPanel';
 import { MetricChart } from '../simulation/MetricChart';
@@ -47,8 +47,15 @@ const PHASE_LABEL: Record<string, string> = {
   RESOLVED: 'Resolved',
 };
 
-export function LiveConsole() {
-  const ops = useLiveOperations();
+interface LiveConsoleProps {
+  /** A compiled user-authored scenario. Absent = the pharma reference demo. */
+  userScenario?: ScenarioConfig;
+  scenarioName?: string;
+  onEditScenario?: () => void;
+}
+
+export function LiveConsole({ userScenario, scenarioName, onEditScenario }: LiveConsoleProps = {}) {
+  const ops = useLiveOperations({ userScenario });
   const narration = useNarration();
   const { playback, result, evaluation, phase, incident, window: decWindow } = ops;
   const now = playback.currentTime;
@@ -114,8 +121,13 @@ export function LiveConsole() {
       <header className={styles.header}>
         <div className={styles.brand}>
           <span className={styles.mark}>VECTRA</span>
-          <span className={styles.sub}>Live Operations</span>
+          <span className={styles.sub}>{scenarioName ?? 'Live Operations'}</span>
         </div>
+        {onEditScenario && (
+          <button type="button" className={styles.ghostBtn} onClick={onEditScenario}>
+            ← Build
+          </button>
+        )}
         <div className={`${styles.statusPill} ${styles[`tone_${statusTone}`]}`}>
           <span className={styles.statusDot} />
           {PHASE_LABEL[phase]}

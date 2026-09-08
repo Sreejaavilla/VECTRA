@@ -110,3 +110,58 @@
   font-size: 12px;
   max-width: 190px;
 }
+
+/* --- launch --- */
+.launch {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(900px 500px at 50% 0%, rgba(77, 163, 255, 0.07), transparent 60%),
+    var(--bg-0);
+  padding: 24px;
+}
+.launchCard {
+  max-width: 460px;
+  background: var(--bg-1);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-l);
+  padding: 28px;
+}
+.launchMark {
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.launchCard h1 {
+  margin: 10px 0 8px;
+  font-size: 22px;
+  color: var(--text-0);
+}
+.launchCard p {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-1);
+}
+.launchButtons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.launchButtons button {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #05121f;
+  height: 38px;
+  border-radius: var(--radius-s);
+  font-weight: 700;
+  font-size: 13px;
+}
+.launchButtons button:hover { filter: brightness(1.08); }
+.launchGhost {
+  background: var(--bg-2) !important;
+  border-color: var(--panel-border) !important;
+  color: var(--text-1) !important;
+}
