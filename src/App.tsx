@@ -33,7 +33,12 @@ interface Controls {
   budgetLakh: number;
   storageDoses: number;
   supportVehicleAvailable: boolean;
+  /** Hard ceiling on cargo temperature (°C) — overrides the scenario default. */
+  maxTemperatureC: number;
 }
+
+/** Scenario default for the critical-temperature constraint. */
+const DEFAULT_MAX_TEMP_C = 14;
 
 /**
  * Turn a 0-100 safety slider into objective weights that sum to 1 — the global
@@ -59,7 +64,10 @@ function toInputs(controls: Controls): SimulationInputs {
       'res-cold-storage': controls.storageDoses,
       'res-support-vehicle': controls.supportVehicleAvailable,
     },
-    constraints: {},
+    constraints:
+      controls.maxTemperatureC === DEFAULT_MAX_TEMP_C
+        ? {}
+        : { 'constraint-critical-temperature': controls.maxTemperatureC },
     priorities: toPriorities(controls.safetyPriority),
   };
 }
@@ -70,6 +78,7 @@ export default function App() {
     budgetLakh: 8,
     storageDoses: 2400,
     supportVehicleAvailable: true,
+    maxTemperatureC: DEFAULT_MAX_TEMP_C,
   });
   const [result, setResult] = useState<SimulationResult | null>(null);
   const [evaluation, setEvaluation] = useState<ScenarioEvaluation | null>(null);
@@ -209,6 +218,20 @@ export default function App() {
               onChange={(e) => setControls((s) => ({ ...s, storageDoses: Number(e.target.value) }))}
             />
             <span className="u-mono">{controls.storageDoses}</span>
+          </label>
+          <label className={styles.field}>
+            <span className="u-label">Max temp °C</span>
+            <input
+              type="range"
+              min={10}
+              max={15}
+              step={0.5}
+              value={controls.maxTemperatureC}
+              onChange={(e) =>
+                setControls((s) => ({ ...s, maxTemperatureC: Number(e.target.value) }))
+              }
+            />
+            <span className="u-mono">{controls.maxTemperatureC}</span>
           </label>
           <label className={styles.check}>
             <input
