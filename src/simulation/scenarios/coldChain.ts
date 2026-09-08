@@ -21,6 +21,7 @@ import type {
   ResourceDefinition,
   Route,
   ScenarioConfig,
+  ScheduledEvent,
   SimulationState,
 } from '../../domain';
 import { createColdChainModels, type ColdChainModelConfig } from '../../engine';
@@ -54,6 +55,8 @@ export const COLD_CHAIN = {
   doses: { 'hospital-a': 1200, 'hospital-b': 900 },
 } as const;
 
+const TOTAL_DEMAND = COLD_CHAIN.doses['hospital-a'] + COLD_CHAIN.doses['hospital-b'];
+
 const MODEL_CONFIG: ColdChainModelConfig = {
   baselineTemperature: COLD_CHAIN.baselineTemperature,
   ambientTemperature: COLD_CHAIN.ambientTemperature,
@@ -62,6 +65,9 @@ const MODEL_CONFIG: ColdChainModelConfig = {
   recoveryRatePerMin: COLD_CHAIN.recoveryRatePerMin,
   degradationRate: COLD_CHAIN.degradationRate,
   nominalDeliveryMinutes: COLD_CHAIN.nominalDeliveryMinutes,
+  horizonMinutes: COLD_CHAIN.durationMinutes,
+  undeliveredDelayMinutes: 999,
+  totalDemandDoses: TOTAL_DEMAND,
   riskBands: { low: 85, moderate: 70, high: 50 },
 };
 
@@ -90,9 +96,16 @@ const facilities: Facility[] = [
   {
     id: 'cold-storage',
     kind: 'storage',
-    label: 'Cold Storage',
-    position: { x: 50, y: 54 },
+    label: 'Regional Cold Store A',
+    position: { x: 46, y: 52 },
     capacity: { capacity: 5000, used: 2600, unit: 'doses' },
+  },
+  {
+    id: 'cold-store-b',
+    kind: 'storage',
+    label: 'Regional Cold Store B',
+    position: { x: 70, y: 40 },
+    capacity: { capacity: 3200, used: 1400, unit: 'doses' },
   },
   { id: 'support-depot', kind: 'hub', label: 'Support Depot', position: { x: 34, y: 6 } },
 ];
@@ -185,9 +198,39 @@ const routes: Route[] = [
     kind: 'reroute',
     travelTimeMinutes: 35,
     waypoints: [
-      { x: 50, y: 54 },
+      { x: 46, y: 52 },
       { x: 70, y: 52 },
       { x: 88, y: 46 },
+    ],
+  },
+  /* --- Regional Cold Store B corridor: the alternate reroute path --- */
+  {
+    id: 'route-hub-storeb',
+    from: 'hub',
+    to: 'cold-store-b',
+    kind: 'reroute',
+    // Farther by distance, but an express corridor — the truck reaches B sooner
+    // and cooler than Store A. It costs more fuel/handling (see the action).
+    travelTimeMinutes: 60,
+    waypoints: [
+      { x: 8, y: 30 },
+      { x: 40, y: 22 },
+      { x: 58, y: 30 },
+      { x: 70, y: 40 },
+    ],
+  },
+  {
+    id: 'route-storeb-hospital-a',
+    from: 'cold-store-b',
+    to: 'hospital-a',
+    kind: 'reroute',
+    // B sits closer to the hospitals — the onward leg is quick.
+    travelTimeMinutes: 28,
+    continuesTo: 'route-hospital-a-hospital-b',
+    waypoints: [
+      { x: 70, y: 40 },
+      { x: 80, y: 24 },
+      { x: 88, y: 12 },
     ],
   },
 ];
@@ -252,6 +295,17 @@ const metrics: MetricDefinition[] = [
     normalize: { min: 1, max: 4 },
     epsilon: 0.01,
   },
+  {
+    id: 'serviceCoverage',
+    label: 'Service coverage',
+    direction: 'maximize',
+    // The WORST is the honest figure — the final step, where a stalled shipment
+    // shows as < 1 because it never reached a hospital.
+    aggregation: 'final',
+    normalize: { min: 0, max: 1 },
+    unit: '%',
+    epsilon: 0.01,
+  },
 ];
 
 /* --------------------------------------------------------------------------- *
@@ -268,10 +322,19 @@ const resources: ResourceDefinition[] = [
   },
   {
     id: 'res-cold-storage',
-    label: 'Cold Storage',
+    label: 'Cold Store A capacity',
     kind: 'consumable',
     initial: 2400,
     capacity: 2400,
+    unit: 'doses',
+    detailFormat: 'count',
+  },
+  {
+    id: 'res-cold-store-b',
+    label: 'Cold Store B capacity',
+    kind: 'consumable',
+    initial: 3000,
+    capacity: 3000,
     unit: 'doses',
     detailFormat: 'count',
   },
@@ -327,6 +390,19 @@ const constraints: ConstraintDefinition[] = [
     appliesTo: 'viability',
   },
   {
+    // A shipment that never reaches a hospital fails, no matter how cold it
+    // stayed. `delay` carries a 999 sentinel at the horizon for anything still
+    // in transit, so this rejects "held at a blockage forever".
+    id: 'constraint-delivery-completed',
+    type: 'delay',
+    label: 'Delivery completed within the horizon',
+    severity: 'hard',
+    scope: 'trajectory',
+    operator: '<=',
+    value: 240,
+    appliesTo: 'delay',
+  },
+  {
     id: 'constraint-safe-temperature',
     type: 'temperature',
     label: 'Safe temperature target',
@@ -371,23 +447,80 @@ function totalPayload(entity: SimulationState['entities'][string]): number {
   return Object.keys(entity.payload).reduce((sum, key) => sum + entity.payload[key], 0);
 }
 
+/**
+ * The two regional cold stores are genuinely different reroute paths:
+ *
+ *   A — near the hub, long warm onward leg to the hospitals
+ *   B — long haul to reach, but cool and quick onward
+ *
+ * `reroute` is swept over `targetStore`, so the engine simulates both and keeps
+ * whichever scores better under the current constraints and priorities. If the
+ * chosen store's onward route is blocked, that variant simply loses.
+ */
+const STORE_PATHS = {
+  'cold-storage': {
+    facilityId: 'cold-storage',
+    resourceId: 'res-cold-storage',
+    inboundRoute: 'route-hub-storage',
+    onwardRoute: 'route-storage-hospital-a',
+    label: 'Regional Cold Store A',
+    budgetRupees: 120000,
+  },
+  'cold-store-b': {
+    facilityId: 'cold-store-b',
+    resourceId: 'res-cold-store-b',
+    inboundRoute: 'route-hub-storeb',
+    onwardRoute: 'route-storeb-hospital-a',
+    label: 'Regional Cold Store B',
+    budgetRupees: 210000,
+  },
+} as const;
+
+type StoreId = keyof typeof STORE_PATHS;
+
+function rerouteTarget(ctx: Parameters<NonNullable<ActionDefinition['apply']>>[1]): StoreId {
+  const raw = ctx.parameterValues?.targetStore;
+  return raw === 'cold-store-b' ? 'cold-store-b' : 'cold-storage';
+}
+
 /** Reroute-to-storage: hand the cargo into the cold room, then resume delivery. */
 const storageTransferHandler: ActionDefinition['apply'] = (state, ctx) => {
   const truck = state.entities['truck-01'];
-  if (!truck || state.flags['storage:transferred']) return;
-  if (truck.routeId !== 'route-hub-storage' || truck.progress < 1) return;
+  if (!truck) return;
+  const path = STORE_PATHS[rerouteTarget(ctx)];
+
+  // One-time: swing onto the chosen inbound corridor at the decision and book
+  // the corridor's cost.
+  if (!state.flags['reroute:started']) {
+    state.flags['reroute:started'] = ctx.now;
+    if (truck.routeId !== path.inboundRoute) {
+      switchRoute(state, 'truck-01', path.inboundRoute, transitionEnv);
+    }
+    state.flags['spend:res-budget'] =
+      (Number(state.flags['spend:res-budget']) || 0) + path.budgetRupees;
+    const budget = state.resources['res-budget'];
+    if (budget) budget.quantity = Math.max(0, budget.quantity - path.budgetRupees / 100000);
+  }
+
+  if (state.flags['storage:transferred']) return;
+  if (truck.routeId !== path.inboundRoute || truck.progress < 1) return;
 
   state.flags['storage:transferred'] = ctx.now;
   truck.refrigerated = true;
   truck.coolingEfficiency = 1;
   truck.status = 'recovering';
 
-  const facility = state.facilities['cold-storage'];
+  const facility = state.facilities[path.facilityId];
   if (facility?.capacity) {
     facility.capacity.used = Math.min(
       facility.capacity.capacity,
       facility.capacity.used + totalPayload(truck),
     );
+  }
+  const store = state.resources[path.resourceId];
+  if (store) {
+    store.quantity = Math.max(0, store.quantity - totalPayload(truck));
+    if (store.quantity <= 0) store.status = 'depleted';
   }
 
   ctx.emit({
@@ -395,13 +528,13 @@ const storageTransferHandler: ActionDefinition['apply'] = (state, ctx) => {
     type: 'STORAGE_TRANSFER',
     eventClass: 'decision',
     entityId: 'truck-01',
-    facilityId: 'cold-storage',
-    message: 'Shipment moved into the cold room — temperature control restored',
+    facilityId: path.facilityId,
+    message: `Shipment moved into ${path.label} — temperature control restored`,
     severity: 'info',
     focusEntityId: 'truck-01',
   });
 
-  switchRoute(state, 'truck-01', 'route-storage-hospital-a', transitionEnv);
+  switchRoute(state, 'truck-01', path.onwardRoute, transitionEnv);
   truck.progress = 0;
   truck.status = 'en_route';
 };
@@ -467,17 +600,34 @@ const hybridHandler: ActionDefinition['apply'] = (state, ctx) => {
 
     state.flags['hybrid:split'] = ctx.now;
 
-    const handover = truck.payload['hospital-b'] ?? 0;
-    if (handover > 0) {
-      delete truck.payload['hospital-b'];
-      support.payload['hospital-b'] = handover;
-      // The doses carry their accumulated damage with them.
+    // Critical (Hospital A) doses always stay on the truck for in-transit
+    // re-cooling. `storeShare` of the NORMAL (Hospital B) doses is handed to the
+    // support vehicle and routed via cold storage; the rest rides with the
+    // truck. Swept over {0.35, 0.6, 0.85} — a bigger store share means a lighter,
+    // faster-cooling truck but a slower, larger stored portion.
+    const rawShare = Number(ctx.parameterValues?.storeShare ?? 1);
+    const storeShare = Math.min(1, Math.max(0, rawShare));
+    const normal = truck.payload['hospital-b'] ?? 0;
+    const moved = Math.round(normal * storeShare);
+    if (moved > 0) {
+      truck.payload['hospital-b'] = normal - moved;
+      if (truck.payload['hospital-b'] <= 0) delete truck.payload['hospital-b'];
+      support.payload['hospital-b'] = (support.payload['hospital-b'] ?? 0) + moved;
+      // The moved doses carry their accumulated damage with them.
       support.cargoExposure = truck.cargoExposure;
       support.cargoTemperature = truck.cargoTemperature;
+      const storeA = state.resources['res-cold-storage'];
+      if (storeA) {
+        storeA.quantity = Math.max(0, storeA.quantity - moved);
+        if (storeA.quantity <= 0) storeA.status = 'depleted';
+      }
     }
 
     truck.refrigerated = true;
-    truck.coolingEfficiency = 1;
+    truck.coolingEfficiency =
+      totalPayload(truck) > COLD_CHAIN.supportVehicleCapacityDoses
+        ? COLD_CHAIN.overCapacityCoolingEfficiency
+        : 1;
     truck.status = 'recovering';
     support.refrigerated = true;
     support.coolingEfficiency = 1;
@@ -488,7 +638,9 @@ const hybridHandler: ActionDefinition['apply'] = (state, ctx) => {
       type: 'INTERCEPTION',
       eventClass: 'decision',
       entityId: 'truck-01',
-      message: `Shipment partitioned — ${handover.toLocaleString()} Hospital B doses moved to the support vehicle, both loads now within cooling capacity`,
+      message: `Shipment partitioned — ${moved.toLocaleString()} Hospital B doses moved to the support vehicle for the cold-store corridor; ${totalPayload(
+        truck,
+      ).toLocaleString()} stay with the truck`,
       severity: 'info',
       focusEntityId: 'truck-01',
     });
@@ -550,20 +702,27 @@ const actions: ActionDefinition[] = [
     label: 'Reroute to Cold Storage',
     decisionTimeMinutes: 42,
     preconditions: [],
-    resourceRequirements: [
-      { resourceId: 'res-cold-storage', amount: 2100 },
-      { resourceId: 'res-budget', amount: 1.2 },
-    ],
-    transitions: [
-      { target: 'resource', id: 'res-budget', op: 'allocate', value: 1.2 },
-      { target: 'resource', id: 'res-cold-storage', op: 'allocate', value: 2100 },
-      {
-        target: 'entity',
-        id: 'truck-01',
-        op: 'route-switch',
-        value: 'route-hub-storage',
+    // The chosen store's capacity is checked per-variant (see `parameters`).
+    resourceRequirements: [],
+    parameters: {
+      targetStore: {
+        type: 'string',
+        values: ['cold-storage', 'cold-store-b'],
+        requirementsByValue: {
+          // Store A: cheap, near the hub, long warm onward leg.
+          'cold-storage': [
+            { resourceId: 'res-cold-storage', amount: 2100 },
+            { resourceId: 'res-budget', amount: 1.2 },
+          ],
+          // Store B: express corridor, cooler and quicker, pricier haul.
+          'cold-store-b': [
+            { resourceId: 'res-cold-store-b', amount: 2100 },
+            { resourceId: 'res-budget', amount: 2.1 },
+          ],
+        },
       },
-    ],
+    },
+    transitions: [],
     apply: storageTransferHandler,
     emittedEvents: [
       {
@@ -572,19 +731,9 @@ const actions: ActionDefinition[] = [
         eventClass: 'decision',
         atOffsetMinutes: 0,
         entityId: 'truck-01',
-        routeId: 'route-hub-storage',
-        message: 'Shipment rerouted toward the cold-storage corridor',
+        message: 'Shipment rerouted toward a regional cold store',
         severity: 'info',
         focusEntityId: 'truck-01',
-      },
-      {
-        id: 'storage-allocated',
-        type: 'RESOURCE_ALLOCATED',
-        eventClass: 'decision',
-        atOffsetMinutes: 0.5,
-        resourceId: 'res-cold-storage',
-        message: 'Cold-storage capacity reserved for 2,100 doses',
-        severity: 'info',
       },
     ],
     costModel: { fixed: 0, perResource: { 'res-budget': 100000 } },
@@ -658,7 +807,18 @@ const actions: ActionDefinition[] = [
     parameters: {
       decisionTimeMinutes: {
         type: 'number',
-        values: [36, 38, 40, 42, 44],
+        values: [38, 40, 42],
+      },
+      storeShare: {
+        type: 'number',
+        // Fraction of the Hospital B doses diverted to cold storage.
+        values: [0.35, 0.6, 0.85, 1],
+        requirementsByValue: {
+          '0.35': [{ resourceId: 'res-cold-storage', amount: 315 }],
+          '0.6': [{ resourceId: 'res-cold-storage', amount: 540 }],
+          '0.85': [{ resourceId: 'res-cold-storage', amount: 765 }],
+          '1': [{ resourceId: 'res-cold-storage', amount: 900 }],
+        },
       },
     },
     preconditions: [
@@ -671,7 +831,6 @@ const actions: ActionDefinition[] = [
     ],
     resourceRequirements: [
       { resourceId: 'res-support-vehicle', amount: true },
-      { resourceId: 'res-cold-storage', amount: 900 },
       // Hybrid runs the support vehicle AND reserves cold storage AND pays for
       // the mid-route partition and double handling — it is the expensive
       // insurance option, not a slightly-pricier interception.
@@ -680,7 +839,6 @@ const actions: ActionDefinition[] = [
     transitions: [
       { target: 'resource', id: 'res-budget', op: 'allocate', value: 5.2 },
       { target: 'resource', id: 'res-support-vehicle', op: 'allocate', value: 1 },
-      { target: 'resource', id: 'res-cold-storage', op: 'allocate', value: 900 },
       { target: 'entity', id: 'support-01', op: 'set-active', value: true },
       { target: 'entity', id: 'support-01', op: 'set-status', value: 'dispatched' },
       {
@@ -718,10 +876,64 @@ const actions: ActionDefinition[] = [
 ];
 
 /* --------------------------------------------------------------------------- *
- * Scenario
+ * Scenario factory
+ *
+ * The base environment (network, actions, constraints, objectives, models) is
+ * fixed. A `DisruptionConfig` layers ONE extra operational shock on top by
+ * appending a scheduled event — the engine propagates it through real state
+ * transitions exactly like the refrigeration failure.
  * --------------------------------------------------------------------------- */
 
-export const coldChainScenario: ScenarioConfig = {
+export interface DisruptionConfig {
+  /** A route that becomes impassable mid-run. Anything on it halts in place. */
+  routeBlockage?: { routeId: string; atMinutes: number };
+}
+
+const REFRIGERATION_FAILURE: ScheduledEvent = {
+  id: 'event-refrigeration-failure',
+  atMinutes: COLD_CHAIN.failureTimeMinutes,
+  type: 'FAILURE',
+  eventClass: 'system',
+  entityId: 'truck-01',
+  focusEntityId: 'truck-01',
+  message: 'Refrigeration failure — temperature control lost on the shipment',
+  severity: 'critical',
+  breaksRefrigeration: ['truck-01'],
+  setFlags: { 'failure:occurred': COLD_CHAIN.failureTimeMinutes },
+};
+
+function routeLabel(routeId: string): string {
+  const route = routes.find((r) => r.id === routeId);
+  if (!route) return routeId;
+  const to = facilities.find((f) => f.id === route.to)?.label ?? route.to;
+  return `corridor to ${to}`;
+}
+
+export function makeColdChainScenario(disruption: DisruptionConfig = {}): ScenarioConfig {
+  const scheduledEvents: ScheduledEvent[] = [REFRIGERATION_FAILURE];
+
+  if (disruption.routeBlockage) {
+    const { routeId, atMinutes } = disruption.routeBlockage;
+    scheduledEvents.push({
+      id: 'event-route-blockage',
+      atMinutes,
+      type: 'CONSTRAINT_VIOLATED',
+      eventClass: 'system',
+      routeId,
+      message: `Route blockage — the ${routeLabel(routeId)} is impassable; anything on it is held`,
+      severity: 'critical',
+      blocksRoutes: [routeId],
+      setFlags: { 'blockage:occurred': atMinutes },
+    });
+  }
+
+  return {
+    ...SCENARIO_BASE,
+    scheduledEvents,
+  };
+}
+
+const SCENARIO_BASE = {
   id: 'cold-chain-recovery',
   version: 2,
   title: 'Cold-Chain Vaccine Recovery',
@@ -778,26 +990,16 @@ export const coldChainScenario: ScenarioConfig = {
       },
     ],
   },
-  scheduledEvents: [
-    {
-      id: 'event-refrigeration-failure',
-      atMinutes: COLD_CHAIN.failureTimeMinutes,
-      type: 'FAILURE',
-      eventClass: 'system',
-      entityId: 'truck-01',
-      focusEntityId: 'truck-01',
-      message: 'Refrigeration failure — temperature control lost on the shipment',
-      severity: 'critical',
-      breaksRefrigeration: ['truck-01'],
-      setFlags: { 'failure:occurred': COLD_CHAIN.failureTimeMinutes },
-    },
-  ],
+  scheduledEvents: [REFRIGERATION_FAILURE],
   stepModels: createColdChainModels(MODEL_CONFIG),
   simulation: {
     timestepMinutes: COLD_CHAIN.timestepMinutes,
     durationMinutes: COLD_CHAIN.durationMinutes,
   },
-};
+} satisfies ScenarioConfig;
+
+/** The default scenario: refrigeration failure only. */
+export const coldChainScenario: ScenarioConfig = makeColdChainScenario();
 
 /** Default priorities: the scenario's declared objective weights. */
 export const DEFAULT_PRIORITIES: Record<string, number> = objectives.reduce(
@@ -817,3 +1019,89 @@ export const STRATEGY_LABELS: Record<string, string> = actions.reduce(
 );
 
 export type StrategyId = 'continue' | 'reroute_storage' | 'emergency_interception' | 'hybrid';
+
+/* --------------------------------------------------------------------------- *
+ * Calibrated demo scenarios
+ *
+ * The operational situation is fixed; each preset layers a disruption and/or a
+ * set of operator inputs so a live walkthrough can show the decision landscape
+ * genuinely moving. The recommendation is NEVER encoded here — it emerges from
+ * the engine. The `expectWinner` field is the calibration target the tests
+ * assert against, not an instruction to the engine.
+ * --------------------------------------------------------------------------- */
+
+export interface DemoControls {
+  safetyPriority?: number;
+  budgetLakh?: number;
+  storageDoses?: number;
+  storeBDoses?: number;
+  supportVehicleAvailable?: boolean;
+  maxTemperatureC?: number;
+}
+
+export interface DemoScenario {
+  id: string;
+  label: string;
+  summary: string;
+  disruption: DisruptionConfig;
+  controls: DemoControls;
+  /** Calibration target — what the engine is expected to recommend. */
+  expectWinner: StrategyId | null;
+}
+
+export const DEMO_SCENARIOS: DemoScenario[] = [
+  {
+    id: 'refrigeration-failure',
+    label: '1 · Refrigeration failure',
+    summary:
+      'Primary vehicle loses cooling at minute 35. Temperature climbs, viability decays — the operator must intervene.',
+    disruption: {},
+    controls: { safetyPriority: 40 },
+    expectWinner: 'emergency_interception',
+  },
+  {
+    id: 'route-blockage',
+    label: '2 · Route blockage',
+    summary:
+      'Refrigeration fails, then the primary corridor to Hospital A is blocked at minute 48. Anything still on it is stranded.',
+    disruption: { routeBlockage: { routeId: 'route-hub-hospital-a', atMinutes: 48 } },
+    controls: { safetyPriority: 40 },
+    expectWinner: 'reroute_storage',
+  },
+  {
+    id: 'no-support-vehicle',
+    label: '3 · Support vehicle unavailable',
+    summary:
+      'Same failure, but no refrigerated support vehicle is available. Emergency and Hybrid are off the table.',
+    disruption: {},
+    controls: { safetyPriority: 40, supportVehicleAvailable: false },
+    expectWinner: 'reroute_storage',
+  },
+  {
+    id: 'storage-squeeze',
+    label: '4 · Cold Store A capacity cut',
+    summary:
+      'Regional Cold Store A is nearly full. Reroute must divert to Store B; Hybrid stores a smaller share.',
+    disruption: {},
+    controls: { safetyPriority: 40, storageDoses: 400 },
+    expectWinner: 'emergency_interception',
+  },
+  {
+    id: 'safety-first',
+    label: '5 · Safety-first priorities',
+    summary:
+      'Identical situation to Scenario 1, but the operator weights product integrity above cost and speed.',
+    disruption: {},
+    controls: { safetyPriority: 80 },
+    expectWinner: 'hybrid',
+  },
+  {
+    id: 'tight-temp-limit',
+    label: '6 · Tight temperature ceiling',
+    summary:
+      'The acceptable temperature ceiling is dropped to 12°C. Reroute via the warm Store A corridor breaches it.',
+    disruption: {},
+    controls: { safetyPriority: 40, maxTemperatureC: 12 },
+    expectWinner: 'emergency_interception',
+  },
+];

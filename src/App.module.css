@@ -99,3 +99,14 @@
   background: rgba(70, 201, 139, 0.12);
   border-color: var(--ok);
 }
+
+.select {
+  background: var(--bg-2);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-s);
+  color: var(--text-1);
+  height: 28px;
+  padding: 0 6px;
+  font-size: 12px;
+  max-width: 190px;
+}

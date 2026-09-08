@@ -10,9 +10,10 @@
 import { useCallback, useMemo, useState } from 'react';
 import {
   analyzeSensitivity,
-  coldChainScenario,
+  DEMO_SCENARIOS,
   DEFAULT_PRIORITIES,
   evaluateScenario,
+  makeColdChainScenario,
   runSimulation,
   STRATEGY_LABELS,
   normalizeWeights,
@@ -32,6 +33,7 @@ interface Controls {
   safetyPriority: number;
   budgetLakh: number;
   storageDoses: number;
+  storeBDoses: number;
   supportVehicleAvailable: boolean;
   /** Hard ceiling on cargo temperature (°C) — overrides the scenario default. */
   maxTemperatureC: number;
@@ -39,6 +41,15 @@ interface Controls {
 
 /** Scenario default for the critical-temperature constraint. */
 const DEFAULT_MAX_TEMP_C = 14;
+
+const BASE_CONTROLS: Controls = {
+  safetyPriority: 40,
+  budgetLakh: 8,
+  storageDoses: 2400,
+  storeBDoses: 3000,
+  supportVehicleAvailable: true,
+  maxTemperatureC: DEFAULT_MAX_TEMP_C,
+};
 
 /**
  * Turn a 0-100 safety slider into objective weights that sum to 1 — the global
@@ -62,6 +73,7 @@ function toInputs(controls: Controls): SimulationInputs {
     resources: {
       'res-budget': controls.budgetLakh,
       'res-cold-storage': controls.storageDoses,
+      'res-cold-store-b': controls.storeBDoses,
       'res-support-vehicle': controls.supportVehicleAvailable,
     },
     constraints:
@@ -73,13 +85,16 @@ function toInputs(controls: Controls): SimulationInputs {
 }
 
 export default function App() {
-  const [controls, setControls] = useState<Controls>({
-    safetyPriority: 40,
-    budgetLakh: 8,
-    storageDoses: 2400,
-    supportVehicleAvailable: true,
-    maxTemperatureC: DEFAULT_MAX_TEMP_C,
-  });
+  const [scenarioId, setScenarioId] = useState<string>(DEMO_SCENARIOS[0].id);
+  const preset = useMemo(
+    () => DEMO_SCENARIOS.find((s) => s.id === scenarioId) ?? DEMO_SCENARIOS[0],
+    [scenarioId],
+  );
+  const scenario = useMemo(
+    () => makeColdChainScenario(preset.disruption),
+    [preset],
+  );
+  const [controls, setControls] = useState<Controls>({ ...BASE_CONTROLS, ...preset.controls });
   const [result, setResult] = useState<SimulationResult | null>(null);
   const [evaluation, setEvaluation] = useState<ScenarioEvaluation | null>(null);
   const [history, setHistory] = useState<SimulationResult[]>([]);
@@ -88,6 +103,16 @@ export default function App() {
   const [runCount, setRunCount] = useState(0);
 
   const inputs = useMemo(() => toInputs(controls), [controls]);
+
+  /** Choosing a preset resets the operator controls to that preset's starting
+   *  point; the operator is then free to drag any of them. */
+  const selectScenario = useCallback((id: string) => {
+    setScenarioId(id);
+    const next = DEMO_SCENARIOS.find((s) => s.id === id) ?? DEMO_SCENARIOS[0];
+    setControls({ ...BASE_CONTROLS, ...next.controls });
+    setEvaluation(null);
+    setResult(null);
+  }, []);
 
   const record = useCallback((next: SimulationResult) => {
     setResult(next);
@@ -99,7 +124,7 @@ export default function App() {
     (strategy: string) => {
       const nextCount = runCount + 1;
       setRunCount(nextCount);
-      const outcome = runSimulation(coldChainScenario, inputs, strategy, {
+      const outcome = runSimulation(scenario, inputs, strategy, {
         runNumber: nextCount,
       });
       if (!outcome.ok) {
@@ -116,14 +141,14 @@ export default function App() {
       setEvaluation(null);
       record(outcome.value.result);
     },
-    [inputs, record, runCount],
+    [scenario, inputs, record, runCount],
   );
 
   /** Simulate the whole decision space and recommend. */
   const evaluateAll = useCallback(() => {
     const nextCount = runCount + 1;
     setRunCount(nextCount);
-    const outcome = evaluateScenario(coldChainScenario, inputs, { runNumber: nextCount });
+    const outcome = evaluateScenario(scenario, inputs, { runNumber: nextCount });
     if (!outcome.ok) {
       setError(outcome.error.message);
       return;
@@ -136,7 +161,7 @@ export default function App() {
       outcome.value.results[0] ??
       null;
     if (chosen) record(chosen);
-  }, [inputs, record, runCount]);
+  }, [scenario, inputs, record, runCount]);
 
   /**
    * Sensitivity is opt-in: it costs ~29 full evaluations, an order of magnitude
@@ -149,7 +174,7 @@ export default function App() {
     // with the one below and never paint "Analyzing…". Yielding a frame first
     // makes the pending state real rather than decorative.
     setTimeout(() => {
-      const outcome = analyzeSensitivity(coldChainScenario, evaluation.inputs);
+      const outcome = analyzeSensitivity(scenario, evaluation.inputs);
       setIsAnalyzing(false);
       if (!outcome.ok) {
         setError(outcome.error.message);
@@ -159,7 +184,7 @@ export default function App() {
         current ? { ...current, sensitivity: outcome.value } : current,
       );
     }, 0);
-  }, [evaluation]);
+  }, [scenario, evaluation]);
 
   /** Switch the viewport to another already-simulated strategy. */
   const selectStrategy = useCallback(
@@ -182,6 +207,21 @@ export default function App() {
           <span className={styles.sub}>CAUSALIS · Decision Simulation</span>
         </div>
         <div className={styles.controls}>
+          <label className={styles.field}>
+            <span className="u-label">Scenario</span>
+            <select
+              className={styles.select}
+              value={scenarioId}
+              onChange={(e) => selectScenario(e.target.value)}
+              title={preset.summary}
+            >
+              {DEMO_SCENARIOS.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className={styles.field}>
             <span className="u-label">Safety priority</span>
             <input
@@ -208,7 +248,7 @@ export default function App() {
             <span className="u-mono">{controls.budgetLakh}</span>
           </label>
           <label className={styles.field}>
-            <span className="u-label">Cold storage</span>
+            <span className="u-label">Store A cap</span>
             <input
               type="range"
               min={0}
@@ -218,6 +258,18 @@ export default function App() {
               onChange={(e) => setControls((s) => ({ ...s, storageDoses: Number(e.target.value) }))}
             />
             <span className="u-mono">{controls.storageDoses}</span>
+          </label>
+          <label className={styles.field}>
+            <span className="u-label">Store B cap</span>
+            <input
+              type="range"
+              min={0}
+              max={3600}
+              step={100}
+              value={controls.storeBDoses}
+              onChange={(e) => setControls((s) => ({ ...s, storeBDoses: Number(e.target.value) }))}
+            />
+            <span className="u-mono">{controls.storeBDoses}</span>
           </label>
           <label className={styles.field}>
             <span className="u-label">Max temp °C</span>

@@ -17,6 +17,8 @@ export interface StepMetrics {
   risk?: number;
   /** Cumulative degree-minutes above the safe temperature. */
   exposure?: number;
+  /** Fraction of total demand delivered so far, 0..1. */
+  serviceCoverage?: number;
 }
 
 export type MetricKey = keyof StepMetrics;
@@ -29,6 +31,7 @@ export const METRIC_KEYS: readonly MetricKey[] = [
   'delay',
   'risk',
   'exposure',
+  'serviceCoverage',
 ];
 
 /** Display thresholds the charts draw. Not the same thing as a constraint. */

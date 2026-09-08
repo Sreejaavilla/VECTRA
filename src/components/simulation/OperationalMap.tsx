@@ -56,6 +56,17 @@ export function OperationalMap({
     [scenario],
   );
 
+  // Routes a disruption event has closed by the current playback time.
+  const blockedRouteIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of events) {
+      if (e.routeId && (e.type === 'CONSTRAINT_VIOLATED' || /blockage|impassable/i.test(e.message))) {
+        set.add(e.routeId);
+      }
+    }
+    return set;
+  }, [events]);
+
   return (
     <svg
       className={styles.map}
@@ -79,12 +90,12 @@ export function OperationalMap({
             route={route}
             d={d}
             state={
-              completedRouteIds.includes(route.id)
-                ? 'completed'
-                : activeRouteIds.includes(route.id)
-                  ? 'active'
-                  : route.blocked
-                    ? 'blocked'
+              route.blocked || blockedRouteIds.has(route.id)
+                ? 'blocked'
+                : completedRouteIds.includes(route.id)
+                  ? 'completed'
+                  : activeRouteIds.includes(route.id)
+                    ? 'active'
                     : 'planned'
             }
           />
