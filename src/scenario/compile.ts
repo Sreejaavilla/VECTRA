@@ -28,8 +28,8 @@ import type {
   ScheduledEvent,
   EntitySeed,
 } from '../domain';
-import { switchRoute, type TransitionEnv } from '../engine';
-import { makeColdChainScenario } from '../simulation/scenarios/coldChain';
+import { createColdChainModels, switchRoute, type TransitionEnv } from '../engine';
+import { COLD_CHAIN, makeColdChainScenario } from '../simulation/scenarios/coldChain';
 import { createGenericModels } from './genericModels';
 import { enumeratePaths, type GraphPath } from './paths';
 import { validateGraph } from './validate';
@@ -462,7 +462,27 @@ function materialisePath(
   };
 }
 
-function compileGeneric(graph: ScenarioGraph): ScenarioConfig {
+/**
+ * The structural half of compilation — facilities, routes, resources, shipment
+ * entities and the candidate actions — derived ENTIRELY from the graph. Both the
+ * generic and the graph-authored cold-chain paths share this; they differ only
+ * in metrics, step models, objectives and physics constants. Nothing from a
+ * built-in template scenario ever enters here.
+ */
+interface CompiledStructure {
+  facilities: Facility[];
+  routes: Route[];
+  resources: ResourceDefinition[];
+  entities: EntitySeed[];
+  allocations: Record<string, number>;
+  actions: ActionDefinition[];
+  totalDemand: number;
+  nominalDeliveryMinutes: number;
+  scheduledEvents: ScheduledEvent[];
+  cascadeRules: ReturnType<typeof compileCascadeRules>;
+}
+
+function compileStructure(graph: ScenarioGraph, refrigerated: boolean): CompiledStructure {
   const facilities = compileFacilities(graph);
   const resources = compileResources(graph);
   applyResourceIncidents(graph, resources);
@@ -503,7 +523,7 @@ function compileGeneric(graph: ScenarioGraph): ScenarioConfig {
       status: 'en_route',
       active: true,
       payload: { [s.destinationId]: s.quantity },
-      refrigerated: s.refrigerated,
+      refrigerated: refrigerated && s.refrigerated,
       coolingEfficiency: 1,
     });
     allocations[s.destinationId] = (allocations[s.destinationId] ?? 0) + s.quantity;
@@ -521,8 +541,6 @@ function compileGeneric(graph: ScenarioGraph): ScenarioConfig {
   const emergencyResource = graph.resources.find(
     (r) => r.kind === 'emergency-vehicle' && r.available && r.quantity >= 1,
   );
-  // Edges a route-blockage incident makes impassable — used to pick a clear
-  // alternate when the emergency vehicle is allocated to a held shipment.
   const blockedEdgeIds = new Set(
     graph.incidents
       .filter((i) => i.type === 'route-blockage' && i.targetId)
@@ -533,11 +551,35 @@ function compileGeneric(graph: ScenarioGraph): ScenarioConfig {
     'truck-01',
     primaryPaths,
     emergencyResource?.id ?? null,
-    Boolean(primary?.refrigerated),
+    Boolean(primary?.refrigerated) && refrigerated,
     env,
     shipmentEntities,
     blockedEdgeIds,
   );
+
+  const scheduledEvents = compileScheduledEvents(graph, 'truck-01', (edgeId) => {
+    const ids = routes
+      .filter((r) => r.id === edgeId || r.id.startsWith(`${edgeId}@`))
+      .map((r) => r.id);
+    return ids.length ? ids : [edgeId];
+  });
+
+  return {
+    facilities,
+    routes,
+    resources,
+    entities,
+    allocations,
+    actions,
+    totalDemand,
+    nominalDeliveryMinutes,
+    scheduledEvents,
+    cascadeRules: compileCascadeRules(graph),
+  };
+}
+
+function compileGeneric(graph: ScenarioGraph): ScenarioConfig {
+  const s = compileStructure(graph, false);
 
   const constraints: ConstraintDefinition[] = [
     {
@@ -557,36 +599,162 @@ function compileGeneric(graph: ScenarioGraph): ScenarioConfig {
     id: graph.id,
     version: graph.version,
     title: graph.name,
-    facilities,
-    routes,
-    metricThresholds: {
-      delay: { min: 0, max: 120 },
-    },
+    facilities: s.facilities,
+    routes: s.routes,
+    metricThresholds: { delay: { min: 0, max: 120 } },
     metricUnits: { delay: 'min', cost: '₹', serviceCoverage: '%' },
     metrics: GENERIC_METRICS,
-    resources,
+    resources: s.resources,
     constraints,
     objectives: genericObjectives(graph.objective),
-    actions,
+    actions: s.actions,
     initialState: {
       initialCargoTemperature: 0,
-      shipmentAllocations: allocations,
-      entities,
+      shipmentAllocations: s.allocations,
+      entities: s.entities,
     },
-    scheduledEvents: compileScheduledEvents(graph, 'truck-01', (edgeId) => {
-      const ids = routes
-        .filter((r) => r.id === edgeId || r.id.startsWith(`${edgeId}@`))
-        .map((r) => r.id);
-      return ids.length ? ids : [edgeId];
+    scheduledEvents: s.scheduledEvents,
+    cascadeRules: s.cascadeRules,
+    stepModels: createGenericModels({
+      nominalDeliveryMinutes: s.nominalDeliveryMinutes,
+      totalDemandDoses: s.totalDemand,
     }),
-    cascadeRules: compileCascadeRules(graph),
-    stepModels: createGenericModels({ nominalDeliveryMinutes, totalDemandDoses: totalDemand }),
     simulation: {
       timestepMinutes: graph.timestepMinutes,
       durationMinutes: graph.durationMinutes,
     },
   };
 }
+
+/**
+ * A cold-chain scenario the user AUTHORED (not the calibrated pharma template):
+ * the graph defines every node, route, resource, shipment and incident. Only the
+ * cold-chain PHYSICS — temperature / exposure / viability step models and the
+ * hard temperature / viability constraints — is layered on. No template entity
+ * leaks in.
+ */
+function compileColdChainGraph(graph: ScenarioGraph): ScenarioConfig {
+  const s = compileStructure(graph, true);
+
+  const metrics: MetricDefinition[] = [
+    {
+      id: 'temperature',
+      label: 'Temperature',
+      direction: 'minimize',
+      aggregation: 'max',
+      normalize: { min: COLD_CHAIN.baselineTemperature, max: COLD_CHAIN.ambientTemperature },
+      unit: '°C',
+      epsilon: 0.05,
+    },
+    {
+      id: 'viability',
+      label: 'Viability',
+      direction: 'maximize',
+      aggregation: 'min',
+      normalize: { min: 0, max: 100 },
+      unit: '%',
+      epsilon: 0.1,
+    },
+    {
+      id: 'exposure',
+      label: 'Thermal exposure',
+      direction: 'minimize',
+      aggregation: 'cumulative',
+      normalize: { min: 0, max: 400 },
+      unit: '°C·min',
+      epsilon: 0.5,
+    },
+    ...GENERIC_METRICS,
+  ];
+
+  const w = PRESET_WEIGHTS[graph.objective];
+  const objectives: ObjectiveDefinition[] = [
+    { id: 'obj-safety', label: 'Safety', metricId: 'viability', weight: w.safety },
+    { id: 'obj-risk', label: 'Risk', metricId: 'risk', weight: w.risk },
+    { id: 'obj-cost', label: 'Cost', metricId: 'cost', weight: w.cost },
+    { id: 'obj-speed', label: 'Speed', metricId: 'delay', weight: w.speed },
+  ];
+
+  const constraints: ConstraintDefinition[] = [
+    {
+      id: 'constraint-critical-temperature',
+      type: 'temperature',
+      label: 'Critical temperature limit',
+      severity: 'hard',
+      scope: 'trajectory',
+      operator: '<=',
+      value: COLD_CHAIN.criticalTemperature,
+      appliesTo: 'temperature',
+    },
+    {
+      id: 'constraint-min-viability',
+      type: 'viability',
+      label: 'Minimum usable viability',
+      severity: 'hard',
+      scope: 'trajectory',
+      operator: '>=',
+      value: 30,
+      appliesTo: 'viability',
+    },
+    {
+      id: 'constraint-final-coverage',
+      type: 'service',
+      label: 'Full delivery on completion',
+      severity: 'hard',
+      scope: 'final',
+      operator: '>=',
+      value: 0.999,
+      appliesTo: 'serviceCoverage',
+    },
+    ...compileUserConstraints(graph),
+  ];
+
+  return {
+    id: graph.id,
+    version: graph.version,
+    title: graph.name,
+    facilities: s.facilities,
+    routes: s.routes,
+    metricThresholds: {
+      temperature: {
+        safe: COLD_CHAIN.safeTemperature,
+        critical: COLD_CHAIN.criticalTemperature,
+        min: 2,
+        max: COLD_CHAIN.ambientTemperature,
+      },
+      viability: { safe: 70, critical: 50, min: 0, max: 100 },
+    },
+    metricUnits: { temperature: '°C', viability: '%', delay: 'min', cost: '₹', exposure: '°C·min' },
+    metrics,
+    resources: s.resources,
+    constraints,
+    objectives,
+    actions: s.actions,
+    initialState: {
+      initialCargoTemperature: COLD_CHAIN.baselineTemperature,
+      shipmentAllocations: s.allocations,
+      entities: s.entities,
+    },
+    scheduledEvents: s.scheduledEvents,
+    cascadeRules: s.cascadeRules,
+    stepModels: createColdChainModels({
+      baselineTemperature: COLD_CHAIN.baselineTemperature,
+      ambientTemperature: COLD_CHAIN.ambientTemperature,
+      safeTemperature: COLD_CHAIN.safeTemperature,
+      failureRatePerMin: COLD_CHAIN.failureRatePerMin,
+      recoveryRatePerMin: COLD_CHAIN.recoveryRatePerMin,
+      degradationRate: COLD_CHAIN.degradationRate,
+      nominalDeliveryMinutes: s.nominalDeliveryMinutes,
+      totalDemandDoses: s.totalDemand,
+      riskBands: { low: 85, moderate: 70, high: 50 },
+    }),
+    simulation: {
+      timestepMinutes: graph.timestepMinutes,
+      durationMinutes: graph.durationMinutes,
+    },
+  };
+}
+
 
 const DECISION_MINUTE = 20;
 
@@ -878,10 +1046,38 @@ function buildGenericActions(
 }
 
 /* --------------------------------------------------------------------------- *
- * COLD-CHAIN compilation — the calibrated pharma scenario + graph overlays
+ * COLD-CHAIN compilation
+ *
+ * Two sub-paths, and the choice is structural, not cosmetic:
+ *
+ *   PHARMA OVERLAY — the graph IS the calibrated pharma template (every base
+ *     facility id is present). The base scenario's calibrated actions
+ *     (reroute_storage / emergency_interception / hybrid with their over-capacity
+ *     cooling handlers) are preserved and the graph's edits are overlaid.
+ *
+ *   AUTHORED       — any other cold-chain graph. The GRAPH defines the entire
+ *     world; only the cold-chain physics (temperature / exposure / viability
+ *     models + hard temperature / viability constraints) is layered on. No
+ *     template entity leaks in — see compileColdChainGraph.
  * --------------------------------------------------------------------------- */
 
+/** The facility ids the calibrated pharma scenario is built around. */
+const PHARMA_BASE_FACILITY_IDS = [
+  'hub',
+  'hospital-a',
+  'hospital-b',
+  'cold-storage',
+  'cold-store-b',
+  'support-depot',
+];
+
+function isPharmaDerived(graph: ScenarioGraph): boolean {
+  const ids = new Set(graph.nodes.map((n) => n.id));
+  return PHARMA_BASE_FACILITY_IDS.every((id) => ids.has(id));
+}
+
 function compileColdChain(graph: ScenarioGraph): ScenarioConfig {
+  if (!isPharmaDerived(graph)) return compileColdChainGraph(graph);
   // Incidents that the pharma scenario factory understands natively.
   const failure = graph.incidents.find((i) => i.type === 'refrigeration-failure');
   const blockage = graph.incidents.find((i) => i.type === 'route-blockage');
