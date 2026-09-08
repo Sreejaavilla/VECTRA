@@ -32,6 +32,8 @@ interface OperationalMapProps {
   focus: FocusTarget | null;
   selectedEntityId: string | null;
   onSelectEntity: (id: string | null) => void;
+  /** Routes the current recommendation would use — drawn as a highlighted plan. */
+  recommendedRouteIds?: string[];
 }
 
 export function OperationalMap({
@@ -43,6 +45,7 @@ export function OperationalMap({
   focus,
   selectedEntityId,
   onSelectEntity,
+  recommendedRouteIds = [],
 }: OperationalMapProps) {
   const focusedId = selectedEntityId ?? focus?.entityId ?? null;
   const dimOthers = focusedId != null;
@@ -55,6 +58,17 @@ export function OperationalMap({
       })),
     [scenario],
   );
+
+  // Routes a disruption event has closed by the current playback time.
+  const blockedRouteIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of events) {
+      if (e.routeId && (e.type === 'CONSTRAINT_VIOLATED' || /blockage|impassable/i.test(e.message))) {
+        set.add(e.routeId);
+      }
+    }
+    return set;
+  }, [events]);
 
   return (
     <svg
@@ -78,13 +92,14 @@ export function OperationalMap({
             key={route.id}
             route={route}
             d={d}
+            recommended={recommendedRouteIds.includes(route.id)}
             state={
-              completedRouteIds.includes(route.id)
-                ? 'completed'
-                : activeRouteIds.includes(route.id)
-                  ? 'active'
-                  : route.blocked
-                    ? 'blocked'
+              route.blocked || blockedRouteIds.has(route.id)
+                ? 'blocked'
+                : completedRouteIds.includes(route.id)
+                  ? 'completed'
+                  : activeRouteIds.includes(route.id)
+                    ? 'active'
                     : 'planned'
             }
           />
@@ -133,7 +148,17 @@ function toPath(points: { x: number; y: number }[]): string {
 
 type RouteVisualState = 'planned' | 'active' | 'completed' | 'blocked';
 
-function RoutePath({ route, d, state }: { route: Route; d: string; state: RouteVisualState }) {
+function RoutePath({
+  route,
+  d,
+  state,
+  recommended = false,
+}: {
+  route: Route;
+  d: string;
+  state: RouteVisualState;
+  recommended?: boolean;
+}) {
   const kindClass =
     route.kind === 'emergency'
       ? styles.routeEmergency
@@ -142,7 +167,12 @@ function RoutePath({ route, d, state }: { route: Route; d: string; state: RouteV
         : styles.routePrimary;
 
   return (
-    <g className={`${styles.route} ${kindClass} ${styles[`route_${state}`]}`}>
+    <g
+      className={`${styles.route} ${kindClass} ${styles[`route_${state}`]} ${
+        recommended ? styles.routeRecommended : ''
+      }`}
+    >
+      {recommended && state !== 'blocked' && <path className={styles.routePlanGlow} d={d} />}
       <path className={styles.routeBase} d={d} />
       {state === 'active' && <path className={styles.routeFlow} d={d} markerMid="url(#chevron)" />}
       {state === 'blocked' && <path className={styles.routeBlocked} d={d} />}

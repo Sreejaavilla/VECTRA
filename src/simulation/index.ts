@@ -3,11 +3,16 @@
 export * from './types';
 export {
   coldChainScenario,
+  makeColdChainScenario,
+  DEMO_SCENARIOS,
   COLD_CHAIN,
   DEFAULT_PRIORITIES,
   OBJECTIVE_IDS,
   STRATEGY_LABELS,
   type StrategyId,
+  type DisruptionConfig,
+  type DemoScenario,
+  type DemoControls,
 } from './scenarios/coldChain';
 export {
   analyzeSensitivity,

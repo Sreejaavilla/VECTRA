@@ -129,7 +129,7 @@ describe('evaluateScenario with a swept action', () => {
   });
 
   it('leaves chosenParameters undefined for an unparameterized strategy', () => {
-    const plain = evaluation.results.find((r) => r.strategy === 'reroute_storage')!;
+    const plain = evaluation.results.find((r) => r.strategy === 'continue')!;
     expect(plain.chosenParameters).toBeUndefined();
   });
 

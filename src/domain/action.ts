@@ -112,6 +112,13 @@ export type ActionHandler = (
 export interface ActionParameter {
   type: 'number' | 'string' | 'boolean';
   values: (number | string | boolean)[];
+  /**
+   * Extra resource requirements a specific value of this parameter imposes,
+   * merged into the variant's `resourceRequirements` during expansion. Lets a
+   * "which cold store" parameter drive its own static feasibility check —
+   * choosing Store B must not fail because Store A is full.
+   */
+  requirementsByValue?: Record<string, ResourceRequirement[]>;
 }
 
 export interface ActionDefinition {

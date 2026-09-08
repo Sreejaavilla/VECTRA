@@ -46,11 +46,24 @@ describe('static feasibility', () => {
     expect(violation.message).toMatch(/support vehicle/i);
   });
 
-  it('excludes a strategy whose resource requirement outruns supply', () => {
+  it('diverts reroute onto Cold Store B when Cold Store A capacity is cut', () => {
+    // Cutting one store no longer kills the reroute family — the sweep just
+    // picks the store that still has room.
     const evaluation = evaluate(makeInputs({ resources: { 'res-cold-storage': 500 } }));
-    // Full reroute needs 2,100 doses of storage; hybrid only needs 900.
+    const reroute = evaluation.results.find((r) => r.strategy === 'reroute_storage');
+    expect(reroute?.feasibility.feasible).toBe(true);
+    expect(reroute?.chosenParameters?.targetStore).toBe('cold-store-b');
+    // Hybrid adapts by storing a smaller share rather than becoming infeasible.
+    expect(evaluation.feasibleStrategies).toContain('hybrid');
+  });
+
+  it('excludes the reroute family only when BOTH cold stores are cut', () => {
+    const evaluation = evaluate(
+      makeInputs({ resources: { 'res-cold-storage': 200, 'res-cold-store-b': 200 } }),
+    );
     expect(evaluation.feasibleStrategies).not.toContain('reroute_storage');
-    expect(evaluation.feasibleStrategies).not.toContain('hybrid');
+    const report = evaluation.infeasibleStrategies.find((r) => r.strategyId === 'reroute_storage')!;
+    expect(report.staticFeasible).toBe(false);
   });
 
   it('leaves storage-independent strategies alone when storage is short', () => {

@@ -27,6 +27,7 @@ import { framesToSteps } from './adapter';
 import { engineError, type EngineResult } from './errors';
 import {
   checkStaticFeasibility,
+  evaluateFinalConstraints,
   evaluateTrajectoryConstraints,
   isTrajectoryFeasible,
   validateInputs,
@@ -87,16 +88,18 @@ export function runSimulation(
   const steps = framesToSteps(scenario, trajectory.frames);
   const events = normalizeEventLog(trajectory.events);
 
-  /* --- level 2: trajectory feasibility --- */
+  /* --- level 2: trajectory + final-state feasibility --- */
   const trajectoryViolations = evaluateTrajectoryConstraints(
     steps,
     scenario.constraints,
     inputs,
   );
-  const trajectoryFeasible = isTrajectoryFeasible(trajectoryViolations);
+  const finalViolations = evaluateFinalConstraints(steps, scenario.constraints, inputs);
+  const postViolations = [...trajectoryViolations, ...finalViolations];
+  const trajectoryFeasible = isTrajectoryFeasible(postViolations);
   const violations: ConstraintViolation[] = [
     ...staticCheck.violations,
-    ...trajectoryViolations,
+    ...postViolations,
   ];
   const feasibility = combineFeasibility(
     strategyId,

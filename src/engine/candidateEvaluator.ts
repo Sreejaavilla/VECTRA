@@ -66,12 +66,19 @@ export function expandAction(action: ActionDefinition): ActionDefinition[] {
       decisionTime = combo['decisionTimeMinutes'];
     }
 
+    // Merge any per-value resource requirements the parameters declare, so a
+    // variant is judged against the resources IT actually consumes.
+    const extraRequirements = keys.flatMap(
+      (k) => action.parameters![k].requirementsByValue?.[String(combo[k])] ?? [],
+    );
+
     return {
       ...action,
       id: internalId,
       baseId: action.id,
       label: action.label,
       decisionTimeMinutes: decisionTime,
+      resourceRequirements: [...action.resourceRequirements, ...extraRequirements],
       parameterValues: combo,
     };
   });

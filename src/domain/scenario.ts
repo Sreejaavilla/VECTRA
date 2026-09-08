@@ -54,11 +54,18 @@ export interface ScheduledEvent {
   message: string;
   severity?: EventSeverity;
   entityId?: string;
+  routeId?: string;
   focusEntityId?: string;
   /** Flags to set when this event fires. */
   setFlags?: Record<string, boolean | number | string>;
   /** Entity ids whose refrigeration this event breaks. */
   breaksRefrigeration?: string[];
+  /**
+   * Route ids this event makes impassable from `atMinutes` onward. An entity
+   * already on a blocked route halts in place until it is diverted; the delay
+   * metric keeps accruing and the cargo keeps warming, which is the whole point.
+   */
+  blocksRoutes?: string[];
 }
 
 export interface ScenarioConfig {

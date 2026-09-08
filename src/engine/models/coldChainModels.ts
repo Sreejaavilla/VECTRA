@@ -30,6 +30,8 @@ export interface ColdChainModelConfig {
   degradationRate: number;
   /** Nominal delivery minute used as the zero point for delay. */
   nominalDeliveryMinutes: number;
+  /** Total demand across all hospitals, for the service-coverage metric. */
+  totalDemandDoses: number;
   /** Viability bands, descending, mapped to risk scores 1..4. */
   riskBands: { low: number; moderate: number; high: number };
 }
@@ -166,7 +168,26 @@ export function createDelayModel(config: ColdChainModelConfig): StepModel {
         state.metrics.delay = Math.max(0, last - config.nominalDeliveryMinutes);
         return;
       }
+      // Still in transit. Delay is just elapsed-vs-nominal; a shipment that
+      // never arrives is caught by the final service-coverage constraint, not
+      // by a delay sentinel.
       state.metrics.delay = Math.max(0, ctx.now - config.nominalDeliveryMinutes);
+    },
+  };
+}
+
+/** Fraction of total demand that has been delivered to a hospital. */
+export function createCoverageModel(config: ColdChainModelConfig): StepModel {
+  return {
+    id: 'model-coverage',
+    step: (state) => {
+      const delivered = state.settled
+        .filter((p) => p.kind === 'delivered')
+        .reduce((total, p) => total + p.doses, 0);
+      state.metrics.serviceCoverage =
+        config.totalDemandDoses <= 0
+          ? 1
+          : Math.min(1, delivered / config.totalDemandDoses);
     },
   };
 }
@@ -180,5 +201,6 @@ export function createColdChainModels(config: ColdChainModelConfig): StepModel[]
     createRiskModel(config),
     createCostModel(),
     createDelayModel(config),
+    createCoverageModel(config),
   ];
 }

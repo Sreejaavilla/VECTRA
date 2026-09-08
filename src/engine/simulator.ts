@@ -133,6 +133,28 @@ function advanceEntities(
     if (!entity.active || !entity.routeId || dt <= 0) continue;
     if (entity.progress >= 1) continue;
 
+    // A blocked route halts everything on it. The entity waits in place —
+    // delay accrues, cargo keeps warming — until an action diverts it.
+    if (state.flags[`route-blocked:${entity.routeId}`] != null) {
+      const heldKey = `held:${entity.id}:${entity.routeId}`;
+      if (state.flags[heldKey] == null) {
+        state.flags[heldKey] = now;
+        entity.status = 'held';
+        emit({
+          id: `event-held-${entity.id}-${Math.round(now)}`,
+          timestamp: now,
+          type: 'THRESHOLD_CROSSED',
+          eventClass: 'system',
+          entityId: entity.id,
+          routeId: entity.routeId,
+          message: `${entity.label} held at the blockage on this route — no forward progress`,
+          severity: 'critical',
+          focusEntityId: entity.id,
+        });
+      }
+      continue;
+    }
+
     const duration = travelMinutes(scenario, entity.routeId);
     entity.progress = Math.min(1, entity.progress + dt / Math.max(1e-6, duration));
     if (entity.progress < 1) continue;
@@ -271,12 +293,16 @@ export function simulateTrajectory(
           entity.status = 'refrigeration_failed';
         }
       }
+      for (const routeId of event.blocksRoutes ?? []) {
+        state.flags[`route-blocked:${routeId}`] = event.atMinutes;
+      }
       emit({
         id: event.id,
         timestamp: event.atMinutes,
         type: event.type,
         eventClass: event.eventClass,
         entityId: event.entityId,
+        routeId: event.routeId,
         message: event.message,
         severity: event.severity,
         focusEntityId: event.focusEntityId ?? event.entityId,
