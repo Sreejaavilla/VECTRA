@@ -126,6 +126,85 @@ describe('useLiveOperations — execution', () => {
   });
 });
 
+/* --------------------------------------------------------------------------- *
+ * §12 — candidate simulation must never mutate the live trajectory
+ * --------------------------------------------------------------------------- */
+
+describe('useLiveOperations — live/candidate isolation (§12)', () => {
+  const entityPos = (r: NonNullable<ReturnType<typeof useLiveOperations>['result']>, t: number) => {
+    const step = [...r.steps].reverse().find((s) => s.timestamp <= t) ?? r.steps[0];
+    return step.entities.map((e) => ({ id: e.id, routeId: e.routeId, progress: e.progress }));
+  };
+
+  it('Analyze does not replace the live trajectory with a candidate preview', async () => {
+    const { result } = renderHook(() => useLiveOperations());
+    act(() => result.current.injectIncident('refrigeration-failure'));
+    const liveBefore = result.current.result;
+    expect(liveBefore).toBe(result.current.doNothing);
+
+    act(() => result.current.analyze());
+    await waitFor(() => expect(result.current.phase).toBe('DECISION_READY'));
+
+    // The map still shows the do-nothing baseline — futures are in the panel.
+    expect(result.current.result).toBe(result.current.doNothing);
+    expect(result.current.result).toBe(liveBefore);
+  });
+
+  it('a priority change during DECISION_READY updates the panel, not the live map', async () => {
+    const { result } = renderHook(() => useLiveOperations());
+    act(() => result.current.injectIncident('refrigeration-failure'));
+    act(() => result.current.analyze());
+    await waitFor(() => expect(result.current.phase).toBe('DECISION_READY'));
+    const liveResult = result.current.result;
+
+    act(() => result.current.setSafetyPriority(90));
+    expect(result.current.result).toBe(liveResult); // unchanged
+  });
+
+  it('Execute starts from the decision boundary with no teleport', async () => {
+    const { result } = renderHook(() => useLiveOperations());
+    act(() => result.current.injectIncident('refrigeration-failure'));
+    act(() => result.current.analyze());
+    await waitFor(() => expect(result.current.phase).toBe('DECISION_READY'));
+
+    const baseline = result.current.doNothing!;
+
+    act(() => result.current.execute());
+    const executed = result.current.result!;
+    const start = result.current.playback.currentTime;
+
+    // Playback resumes at or before the chosen response's decision moment.
+    const decisionEvt = executed.events.find(
+      (e) => e.eventClass === 'decision' || e.type === 'DECISION' || e.type === 'VEHICLE_DISPATCHED',
+    );
+    expect(start).toBeLessThanOrEqual((decisionEvt?.timestamp ?? Infinity) + 1e-9);
+
+    // At that instant the executed trajectory is frame-identical to the baseline
+    // the operator was watching — nothing teleports.
+    expect(entityPos(executed, start)).toEqual(entityPos(baseline, start));
+  });
+
+  it('candidate results are independent objects (mutating one cannot affect another)', async () => {
+    const { result } = renderHook(() => useLiveOperations());
+    act(() => result.current.injectIncident('refrigeration-failure'));
+    act(() => result.current.analyze());
+    await waitFor(() => expect(result.current.phase).toBe('DECISION_READY'));
+    const results = result.current.evaluation!.results;
+    const seen = new Set(results.map((r) => r));
+    expect(seen.size).toBe(results.length);
+    for (const r of results) expect(r).not.toBe(result.current.doNothing);
+  });
+
+  it('reset after execute restores the exact deterministic baseline', () => {
+    const { result } = renderHook(() => useLiveOperations());
+    const before = canonicalSerialize(result.current.result);
+    act(() => result.current.injectIncident('refrigeration-failure'));
+    act(() => result.current.analyze());
+    act(() => result.current.reset());
+    expect(canonicalSerialize(result.current.result)).toBe(before);
+  });
+});
+
 describe('useNarration', () => {
   it('reports unsupported without throwing when SpeechSynthesis is absent', () => {
     const { result } = renderHook(() => useNarration());

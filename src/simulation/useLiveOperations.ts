@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useMemo, useRef, useState } from 'react';
+import { resolveEventClass } from '../domain';
 import {
   DEFAULT_PRIORITIES,
   evaluateScenario,
@@ -284,10 +285,19 @@ export function useLiveOperations(options: LiveOperationsOptions = {}): LiveOper
     [],
   );
 
+  /** The decision boundary: the earliest minute any candidate acts. Candidate
+   *  and do-nothing trajectories are frame-identical up to here, so the map can
+   *  switch between them at this instant with zero visual discontinuity. Plain
+   *  const, not a hook — a trivial min over a handful of actions. */
+  const decisionBoundary = Math.min(...scenario.actions.map((a) => a.decisionTimeMinutes));
+
   const analyze = useCallback(() => {
     playback.pause();
-    // Jump to just after the incident so the map + timeline show what happened.
-    playback.seek((incident?.atMinutes ?? 35) + 22);
+    // Hold exactly on the decision boundary. The live entity does NOT move and
+    // is NOT replaced with a candidate preview — candidate futures live in the
+    // side panel and the counterfactual comparison, never on the live map.
+    playback.seek(decisionBoundary);
+    setStartTime(decisionBoundary);
     setPhase('ANALYZING');
     if (analyzeTimer.current) clearTimeout(analyzeTimer.current);
     // Presentational beat only — the evaluation itself is synchronous below.
@@ -295,16 +305,8 @@ export function useLiveOperations(options: LiveOperationsOptions = {}): LiveOper
     analyzeTimer.current = setTimeout(() => {
       setEvaluation(ev);
       setPhase('DECISION_READY');
-      // Surface the recommended future on the map while the operator decides.
-      if (ev?.recommendation) {
-        const rec = ev.results.find((r) => r.strategy === ev.recommendation!.strategyId);
-        if (rec) {
-          setResult(rec);
-          setStartTime((incident?.atMinutes ?? 35) + 22);
-        }
-      }
     }, 650);
-  }, [scenario, controls, incident, playback, runEvaluation]);
+  }, [scenario, controls, playback, runEvaluation, decisionBoundary]);
 
   /* --- priority / constraint changes ---------------------------------- */
 
@@ -315,15 +317,13 @@ export function useLiveOperations(options: LiveOperationsOptions = {}): LiveOper
       const prev = evaluation?.recommendation?.strategyId;
       const ev = runEvaluation(scenario, next);
       setEvaluation(ev);
-      if (ev?.recommendation) {
-        const rec = ev.results.find((r) => r.strategy === ev.recommendation!.strategyId);
-        if (rec) setResult(rec);
-        if (prev && prev !== ev.recommendation.strategyId) {
-          setRecommendationChanged(true);
-          if (flashTimer.current) clearTimeout(flashTimer.current);
-          flashTimer.current = setTimeout(() => setRecommendationChanged(false), 4000);
-        }
+      if (ev?.recommendation && prev && prev !== ev.recommendation.strategyId) {
+        setRecommendationChanged(true);
+        if (flashTimer.current) clearTimeout(flashTimer.current);
+        flashTimer.current = setTimeout(() => setRecommendationChanged(false), 4000);
       }
+      // The live map keeps showing the do-nothing baseline until Execute — a
+      // priority change updates the panel, never teleports the live entity.
       if (phase === 'EXECUTING') setPhase('DECISION_READY');
     },
     [phase, scenario, evaluation, runEvaluation],
@@ -346,11 +346,22 @@ export function useLiveOperations(options: LiveOperationsOptions = {}): LiveOper
       (r) => r.strategy === evaluation.recommendation!.strategyId,
     );
     if (!rec) return;
+    // Execution begins one step BEFORE the chosen response's decision fires — the
+    // exact state the operator was looking at. Up to that frame the chosen
+    // trajectory is identical to the baseline, so nothing jumps; from there it
+    // plays the real response (dispatch -> intercept -> recovery -> delivery).
+    const decisionEvt = rec.events.find((e) => resolveEventClass(e) === 'decision');
+    const dt = rec.scenario.simulation.timestepMinutes;
+    const boundary = Math.max(
+      0,
+      (decisionEvt?.timestamp ?? decisionBoundary) - dt,
+    );
     setResult(rec);
-    setStartTime(playback.currentTime);
+    setStartTime(boundary);
     setAutoPlay(true);
     setPhase('EXECUTING');
-  }, [evaluation, playback.currentTime]);
+    playback.seek(boundary);
+  }, [evaluation, decisionBoundary, playback]);
 
   /* --- EXECUTING -> RESOLVED is derived from playback completion ------ */
   const effectivePhase: LivePhase =
