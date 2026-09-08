@@ -21,9 +21,9 @@ describe('sensitivity report', () => {
   });
 
   it('records the baseline it perturbed around', () => {
-    expect(report.baselineStrategyId).toBe('hybrid');
+    expect(report.baselineStrategyId).toBe('emergency_interception');
     expect(report.baselineScore).toBeGreaterThan(0);
-    expect(report.baselineLabel).toBe('Hybrid Recovery');
+    expect(report.baselineLabel).toBe('Emergency Interception');
   });
 
   it('probes every resource and every objective', () => {
@@ -100,17 +100,26 @@ describe('decision flips', () => {
     const probe = report.probes.find((p) => p.inputId === 'res-support-vehicle')!;
     expect(probe.flip).toEqual({
       value: false,
-      from: 'hybrid',
+      from: 'emergency_interception',
       to: 'reroute_storage',
       toLabel: 'Reroute to Cold Storage',
       direction: 'toggle',
     });
   });
 
-  it('flips when cost is prioritised heavily enough', () => {
-    const probe = report.probes.find((p) => p.inputId === 'obj-cost')!;
-    expect(probe.flip?.to).toBe('emergency_interception');
+  it('flips to Hybrid Recovery when safety is prioritised heavily enough', () => {
+    // Proof 3: the recommendation is genuinely a function of the operator's
+    // priorities. Past a safety weight of ~0.55 the more expensive, higher-
+    // viability Hybrid Recovery overtakes Emergency Interception.
+    const probe = report.probes.find((p) => p.inputId === 'obj-safety')!;
+    expect(probe.flip?.to).toBe('hybrid');
     expect(probe.flip?.direction).toBe('above');
+  });
+
+  it('flips toward Hybrid Recovery when cost stops mattering', () => {
+    const probe = report.probes.find((p) => p.inputId === 'obj-cost')!;
+    expect(probe.flip?.to).toBe('hybrid');
+    expect(probe.flip?.direction).toBe('below');
   });
 
   it('reports the flip nearest the baseline, not merely any flip', () => {

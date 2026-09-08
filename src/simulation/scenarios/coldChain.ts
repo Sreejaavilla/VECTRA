@@ -672,10 +672,13 @@ const actions: ActionDefinition[] = [
     resourceRequirements: [
       { resourceId: 'res-support-vehicle', amount: true },
       { resourceId: 'res-cold-storage', amount: 900 },
-      { resourceId: 'res-budget', amount: 3.4 },
+      // Hybrid runs the support vehicle AND reserves cold storage AND pays for
+      // the mid-route partition and double handling — it is the expensive
+      // insurance option, not a slightly-pricier interception.
+      { resourceId: 'res-budget', amount: 5.2 },
     ],
     transitions: [
-      { target: 'resource', id: 'res-budget', op: 'allocate', value: 3.4 },
+      { target: 'resource', id: 'res-budget', op: 'allocate', value: 5.2 },
       { target: 'resource', id: 'res-support-vehicle', op: 'allocate', value: 1 },
       { target: 'resource', id: 'res-cold-storage', op: 'allocate', value: 900 },
       { target: 'entity', id: 'support-01', op: 'set-active', value: true },
@@ -706,7 +709,7 @@ const actions: ActionDefinition[] = [
         eventClass: 'decision',
         atOffsetMinutes: 0.5,
         resourceId: 'res-budget',
-        message: 'Support vehicle, 900 doses of cold storage and ₹3.4L allocated',
+        message: 'Support vehicle, 900 doses of cold storage and ₹5.2L allocated',
         severity: 'info',
       },
     ],

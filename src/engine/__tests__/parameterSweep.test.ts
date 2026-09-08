@@ -115,8 +115,8 @@ describe('evaluateScenario with a swept action', () => {
   });
 
   it('reports the chosen configuration on a parameterized winner', () => {
-    // Hybrid wins at the baseline and is swept on decision time.
-    expect(evaluation.recommendation?.strategyId).toBe('hybrid');
+    // Emergency Interception wins at the baseline and is swept on decision time.
+    expect(evaluation.recommendation?.strategyId).toBe('emergency_interception');
     expect(evaluation.recommendation?.chosenParameters).toBeDefined();
     expect(evaluation.recommendation?.chosenParameters).toHaveProperty('decisionTimeMinutes');
   });
