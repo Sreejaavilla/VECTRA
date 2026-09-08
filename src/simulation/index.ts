@@ -29,6 +29,16 @@ export {
   type CausalNodeKind,
 } from './causalChain';
 export {
+  visibleStripMetrics,
+  scenarioHasMetric,
+  formatMetric,
+  formatCoverage,
+  formatRupees,
+  primaryOutcomeMetric,
+  describeDoNothing,
+  type VisibleMetric,
+} from './metricFormat';
+export {
   analyzeSensitivity,
   costOfWaiting,
   evaluateScenario,

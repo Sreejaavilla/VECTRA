@@ -19,11 +19,16 @@ import {
 } from '../../simulation/narrative';
 import {
   INCIDENT_LABELS,
-  SHIPMENT,
   useLiveOperations,
   type IncidentType,
 } from '../../simulation/useLiveOperations';
 import { useNarration } from '../../simulation/useNarration';
+import {
+  visibleStripMetrics,
+  scenarioHasMetric,
+  formatMetric,
+  describeDoNothing,
+} from '../../simulation/metricFormat';
 import type { ScenarioConfig, SimulationResult } from '../../simulation/types';
 import { OperationalMap } from '../simulation/OperationalMap';
 import { DecisionImpactPanel } from '../simulation/DecisionImpactPanel';
@@ -232,8 +237,9 @@ function CommandDrawer({
       <div className={styles.card}>
         <span className="u-label">Incident Control</span>
         <p className={styles.stable}>
-          Network stable · Shipment {SHIPMENT.id} · {SHIPMENT.doses.toLocaleString()} doses in
-          transit · 3 hospital destinations
+          Network stable · {ops.scenario.initialState.entities.filter((e) => e.kind === 'shipment_vehicle').length}{' '}
+          shipments in transit · {ops.scenario.facilities.filter((f) => f.kind === 'destination').length}{' '}
+          destinations
         </p>
         <label className={styles.field}>
           <span className="u-label">Inject disruption</span>
@@ -265,7 +271,10 @@ function CommandDrawer({
     const breach = ops.window?.breachAtMinutes ?? null;
     const remaining =
       breach != null ? Math.max(0, Math.ceil(breach - ops.playback.currentTime)) : null;
-    const doNothingViability = doNothing?.steps.at(-1)?.metrics.viability;
+    const doNothingLast = doNothing?.steps.at(-1)?.metrics;
+    const doNothingLine =
+      ops.result && doNothingLast ? describeDoNothing(ops.result.scenario, doNothingLast) : null;
+    const isColdChain = ops.result ? scenarioHasMetric(ops.result.scenario, 'temperature') : true;
     return (
       <div className={`${styles.card} ${styles.alertCard}`}>
         <span className={styles.critLabel}>Critical Incident</span>
@@ -274,17 +283,18 @@ function CommandDrawer({
         </h2>
         <ul className={styles.factList}>
           <li>
-            <strong>{SHIPMENT.doses.toLocaleString()}</strong> doses currently exposed
+            <strong>{ops.evaluation?.results.length ?? ops.scenario.actions.length}</strong> response
+            options — <strong>{ops.scenario.initialState.entities.filter((e) => e.kind === 'shipment_vehicle').length}</strong> shipments in transit
           </li>
           {remaining != null && (
             <li>
-              Decision window <strong>{remaining} min</strong> before the cold-chain limit
+              Decision window <strong>{remaining} min</strong>
+              {isColdChain ? ' before the cold-chain limit' : ' before service falls short'}
             </li>
           )}
-          {doNothingViability != null && (
+          {doNothingLine && (
             <li>
-              Do nothing → viability collapses to{' '}
-              <strong>{Math.round(doNothingViability)}%</strong>
+              Do nothing → <strong>{doNothingLine}</strong>
             </li>
           )}
         </ul>
@@ -409,25 +419,34 @@ function LiveStatusStrip({
   if (!result) return <div className={styles.statusStrip} />;
   const frame = getStateAtTime(result, time);
   const m = frame.metrics;
+  const isColdChain = scenarioHasMetric(result.scenario, 'temperature');
   const temp = m.temperature ?? 5;
   const via = m.viability ?? 100;
-  const rising = (result.steps.find((s) => s.timestamp > time + 5)?.metrics.temperature ?? temp) > temp + 0.05;
+  const coverage = m.serviceCoverage ?? 0;
+  const rising =
+    isColdChain &&
+    (result.steps.find((s) => s.timestamp > time + 5)?.metrics.temperature ?? temp) > temp + 0.05;
+
+  // Status word is derived from whichever risk signal the scenario models.
+  const atRisk = isColdChain ? via < 60 || temp > 13 : coverage < 0.5 && time > 0;
   const statusWord =
     phase === 'RESOLVED'
       ? 'DELIVERED'
       : phase === 'NORMAL'
         ? 'NORMAL'
-        : via < 60 || temp > 13
+        : atRisk
           ? 'AT RISK'
           : phase === 'EXECUTING'
             ? 'RECOVERING'
             : 'DEGRADING';
 
+  const stripMetrics = visibleStripMetrics(result.scenario);
+
   return (
     <div className={styles.statusStrip}>
       <div className={styles.stat}>
-        <span className="u-label">Shipment</span>
-        <span className={styles.statVal}>{SHIPMENT.id}</span>
+        <span className="u-label">Network</span>
+        <span className={styles.statVal}>{result.scenario.facilities.length} nodes</span>
       </div>
       <div className={styles.stat}>
         <span className="u-label">Status</span>
@@ -435,22 +454,18 @@ function LiveStatusStrip({
           {statusWord}
         </span>
       </div>
-      <div className={styles.stat}>
-        <span className="u-label">Temp</span>
-        <span className={`${styles.statVal} u-mono`}>
-          {temp.toFixed(1)}°C {rising ? '↑' : ''}
-        </span>
-      </div>
-      <div className={styles.stat}>
-        <span className="u-label">Viability</span>
-        <span className={`${styles.statVal} u-mono`}>{Math.round(via)}%</span>
-      </div>
-      <div className={styles.stat}>
-        <span className="u-label">Coverage</span>
-        <span className={`${styles.statVal} u-mono`}>
-          {Math.round((m.serviceCoverage ?? 0) * 100)}%
-        </span>
-      </div>
+      {stripMetrics.map((vm) => {
+        const raw = m[vm.id as keyof typeof m];
+        return (
+          <div className={styles.stat} key={vm.id}>
+            <span className="u-label">{vm.shortLabel}</span>
+            <span className={`${styles.statVal} u-mono`}>
+              {formatMetric(vm.definition, raw)}
+              {vm.id === 'temperature' && rising ? ' ↑' : ''}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -561,12 +576,14 @@ function FutureBars({
             </div>
           );
         })}
-        {doNothing && (
-          <p className={styles.doNothing}>
-            Doing nothing: viability falls to{' '}
-            {Math.round(doNothing.steps.at(-1)?.metrics.viability ?? 0)}%.
-          </p>
-        )}
+        {doNothing &&
+          (() => {
+            const line = describeDoNothing(
+              evaluation.scenario,
+              doNothing.steps.at(-1)?.metrics ?? {},
+            );
+            return line ? <p className={styles.doNothing}>Doing nothing: {line}.</p> : null;
+          })()}
       </div>
     </div>
   );
@@ -677,8 +694,11 @@ function EvidenceDrawer({
   result: SimulationResult;
   onClose: () => void;
 }) {
+  const isColdChain = scenarioHasMetric(result.scenario, 'temperature');
   const temp = getMetricSeries(result, 'temperature');
   const via = getMetricSeries(result, 'viability');
+  const coverage = getMetricSeries(result, 'serviceCoverage').map((p) => ({ t: p.t, value: p.value * 100 }));
+  const delay = getMetricSeries(result, 'delay');
   return (
     <div className={styles.evidenceOverlay} role="dialog" aria-label="Decision evidence">
       <div className={styles.evidencePanel}>
@@ -695,26 +715,51 @@ function EvidenceDrawer({
             reveal={1}
           />
           <div className={styles.evidenceCharts}>
-            <MetricChart
-              label="Temperature"
-              series={temp}
-              thresholds={result.scenario.metricThresholds.temperature}
-              unit="°C"
-              currentTime={result.duration}
-              duration={result.duration}
-              accent="var(--temp)"
-              safeIsLow
-            />
-            <MetricChart
-              label="Viability"
-              series={via}
-              thresholds={result.scenario.metricThresholds.viability}
-              unit="%"
-              currentTime={result.duration}
-              duration={result.duration}
-              accent="var(--viability)"
-              safeIsLow={false}
-            />
+            {isColdChain ? (
+              <>
+                <MetricChart
+                  label="Temperature"
+                  series={temp}
+                  thresholds={result.scenario.metricThresholds.temperature}
+                  unit="°C"
+                  currentTime={result.duration}
+                  duration={result.duration}
+                  accent="var(--temp)"
+                  safeIsLow
+                />
+                <MetricChart
+                  label="Viability"
+                  series={via}
+                  thresholds={result.scenario.metricThresholds.viability}
+                  unit="%"
+                  currentTime={result.duration}
+                  duration={result.duration}
+                  accent="var(--viability)"
+                  safeIsLow={false}
+                />
+              </>
+            ) : (
+              <>
+                <MetricChart
+                  label="Service coverage"
+                  series={coverage}
+                  unit="%"
+                  currentTime={result.duration}
+                  duration={result.duration}
+                  accent="var(--viability)"
+                  safeIsLow={false}
+                />
+                <MetricChart
+                  label="Delivery delay"
+                  series={delay}
+                  unit="min"
+                  currentTime={result.duration}
+                  duration={result.duration}
+                  accent="var(--temp)"
+                  safeIsLow
+                />
+              </>
+            )}
           </div>
           <ConstraintEvidence result={result} />
         </div>
