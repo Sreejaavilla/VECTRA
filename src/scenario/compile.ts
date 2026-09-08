@@ -472,6 +472,7 @@ function compileGeneric(graph: ScenarioGraph): ScenarioConfig {
   const entities: EntitySeed[] = [];
   const allocations: Record<string, number> = {};
   const pathsByShipment: Record<string, CompiledPath[]> = {};
+  const shipmentEntities: ShipmentEntity[] = [];
 
   graph.shipments.forEach((s, sIdx) => {
     const graphPaths = enumeratePaths(graph, s.originId, s.destinationId);
@@ -484,6 +485,15 @@ function compileGeneric(graph: ScenarioGraph): ScenarioConfig {
     pathsByShipment[s.id] = compiledPaths;
 
     const entityId = sIdx === 0 ? 'truck-01' : `truck-0${sIdx + 1}`;
+    shipmentEntities.push({
+      shipmentId: s.id,
+      entityId,
+      label: s.label,
+      priority: s.priority,
+      quantity: s.quantity,
+      destinationId: s.destinationId,
+      paths: compiledPaths,
+    });
     entities.push({
       id: entityId,
       kind: 'shipment_vehicle',
@@ -508,16 +518,25 @@ function compileGeneric(graph: ScenarioGraph): ScenarioConfig {
 
   const env: TransitionEnv = { routes, facilities };
   const primaryPaths = primary ? pathsByShipment[primary.id] ?? [] : [];
-  const hasEmergency = graph.resources.some(
+  const emergencyResource = graph.resources.find(
     (r) => r.kind === 'emergency-vehicle' && r.available && r.quantity >= 1,
+  );
+  // Edges a route-blockage incident makes impassable — used to pick a clear
+  // alternate when the emergency vehicle is allocated to a held shipment.
+  const blockedEdgeIds = new Set(
+    graph.incidents
+      .filter((i) => i.type === 'route-blockage' && i.targetId)
+      .map((i) => i.targetId as string),
   );
 
   const actions = buildGenericActions(
     'truck-01',
     primaryPaths,
-    hasEmergency ? graph.resources.find((r) => r.kind === 'emergency-vehicle')!.id : null,
+    emergencyResource?.id ?? null,
     Boolean(primary?.refrigerated),
     env,
+    shipmentEntities,
+    blockedEdgeIds,
   );
 
   const constraints: ConstraintDefinition[] = [
@@ -571,12 +590,143 @@ function compileGeneric(graph: ScenarioGraph): ScenarioConfig {
 
 const DECISION_MINUTE = 20;
 
+interface ShipmentEntity {
+  shipmentId: string;
+  entityId: string;
+  label: string;
+  priority: 'critical' | 'high' | 'normal';
+  quantity: number;
+  destinationId: string;
+  paths: CompiledPath[];
+}
+
+/** Base edge id from a materialised route id (`<edge>@<ship>-p<idx>` -> `<edge>`). */
+function baseEdgeOf(routeId: string): string {
+  const at = routeId.indexOf('@');
+  return at === -1 ? routeId : routeId.slice(0, at);
+}
+
+/**
+ * One emergency-vehicle allocation action per shipment: `emergency_<entityId>`.
+ * Each requires the single shared emergency-vehicle resource, so the engine can
+ * only ever pick one — resource exclusivity by construction. The `apply` handler
+ * rescues exactly its target shipment (clear-alternate reroute + expedite);
+ * every other shipment is left to the baseline. Which allocation wins is decided
+ * by the engine's scoring over serviceCoverage / delay / risk — never here.
+ */
+function buildEmergencyAllocations(
+  emergencyResourceId: string,
+  shipments: ShipmentEntity[],
+  blockedEdgeIds: Set<string>,
+  env: TransitionEnv,
+): ActionDefinition[] {
+  const decision = DECISION_MINUTE;
+  const interceptMinutes = 12;
+
+  return shipments
+    .filter((s) => s.paths.length > 0)
+    .map((s) => {
+      const clearAlt =
+        s.paths.find(
+          (p) => p.index > 0 && p.routeIds.every((r) => !blockedEdgeIds.has(baseEdgeOf(r))),
+        ) ??
+        s.paths.find((p) => p.routeIds.every((r) => !blockedEdgeIds.has(baseEdgeOf(r)))) ??
+        null;
+      const rerouteCost = clearAlt ? Math.round(clearAlt.cost) : 0;
+
+      const action: ActionDefinition = {
+        id: `emergency_${s.entityId}`,
+        label: `Emergency vehicle → ${s.label}`,
+        decisionTimeMinutes: decision,
+        preconditions: [
+          {
+            kind: 'resource',
+            ref: emergencyResourceId,
+            operator: 'available',
+            message: 'Emergency allocation requires an available emergency vehicle.',
+          },
+        ],
+        resourceRequirements: [
+          { resourceId: emergencyResourceId, amount: 1 },
+          { resourceId: 'res-budget', amount: 2.6 },
+        ],
+        transitions: [
+          { target: 'resource', id: 'res-budget', op: 'allocate', value: 2.6 },
+          { target: 'resource', id: emergencyResourceId, op: 'allocate', value: 1 },
+        ],
+        apply: (state, ctx) => {
+          const ent = state.entities[s.entityId];
+          if (!ent) return;
+          if (ctx.sinceDecision < interceptMinutes) return;
+          if (state.flags['emergency:done']) {
+            if (ent.progress < 1 && ent.active) {
+              ent.progress = Math.min(1, ent.progress + 0.05);
+            }
+            return;
+          }
+          state.flags['emergency:done'] = ctx.now;
+          state.flags[`emergency:target:${s.entityId}`] = ctx.now;
+
+          const heldOnBlocked =
+            ent.routeId != null && state.flags[`route-blocked:${ent.routeId}`] != null;
+          if (heldOnBlocked && clearAlt) {
+            switchRoute(state, s.entityId, clearAlt.routeIds[0], env);
+            ent.progress = 0;
+            state.flags['spend:res-budget'] =
+              (Number(state.flags['spend:res-budget']) || 0) + rerouteCost;
+            const b = state.resources['res-budget'];
+            if (b) b.quantity = Math.max(0, b.quantity - rerouteCost / 100000);
+          }
+          ent.refrigerated = true;
+          ent.coolingEfficiency = 1;
+          ent.status = 'recovering';
+
+          ctx.emit({
+            id: 'interception',
+            type: 'INTERCEPTION',
+            eventClass: 'system',
+            entityId: s.entityId,
+            message:
+              heldOnBlocked && clearAlt
+                ? `Emergency vehicle diverts ${s.label} onto a clear corridor`
+                : `Emergency vehicle takes over ${s.label} — expedited`,
+            severity: 'info',
+            focusEntityId: s.entityId,
+          });
+          ctx.emit({
+            id: 'recovery',
+            type: 'RECOVERY',
+            eventClass: 'system',
+            entityId: s.entityId,
+            message: `${s.label} stabilising under emergency escort`,
+            severity: 'info',
+          });
+        },
+        emittedEvents: [
+          {
+            id: 'dispatch',
+            type: 'VEHICLE_DISPATCHED',
+            eventClass: 'decision',
+            atOffsetMinutes: 0,
+            entityId: s.entityId,
+            message: `Emergency vehicle dispatched to ${s.label}`,
+            severity: 'info',
+          },
+        ],
+        costModel: { perResource: { 'res-budget': 100000 } },
+      };
+      return action;
+    });
+}
+
 function buildGenericActions(
   primaryEntityId: string,
   primaryPaths: CompiledPath[],
   emergencyResourceId: string | null,
   refrigerated: boolean,
   env: TransitionEnv,
+  shipmentEntities: ShipmentEntity[],
+  blockedEdgeIds: Set<string>,
 ): ActionDefinition[] {
   const decision = DECISION_MINUTE;
   const actions: ActionDefinition[] = [
@@ -644,7 +794,15 @@ function buildGenericActions(
     });
   }
 
-  if (emergencyResourceId) {
+  // Multi-shipment contention: one scarce emergency vehicle, several shipments
+  // that may need it. Emit an allocation action per shipment and let the engine
+  // choose (see buildEmergencyAllocations). Single-shipment scenarios keep the
+  // simpler `emergency` action for backward compatibility.
+  if (emergencyResourceId && shipmentEntities.length >= 2) {
+    actions.push(
+      ...buildEmergencyAllocations(emergencyResourceId, shipmentEntities, blockedEdgeIds, env),
+    );
+  } else if (emergencyResourceId) {
     const interceptMinutes = 14;
     actions.push({
       id: 'emergency',

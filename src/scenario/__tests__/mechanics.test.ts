@@ -234,8 +234,14 @@ describe('user graph -> engine (mandatory integration)', () => {
 
     // Both shipments become entities.
     expect(compiled.scenario!.initialState.entities.filter((e) => e.kind === 'shipment_vehicle').length).toBe(2);
-    // Emergency resource -> an emergency action exists.
-    expect(compiled.scenario!.actions.some((a) => a.id === 'emergency')).toBe(true);
+    // One scarce emergency vehicle + two shipments -> one allocation action per
+    // shipment (multi-shipment resource contention, CP2).
+    const emAllocations = compiled.scenario!.actions.filter((a) => a.id.startsWith('emergency_'));
+    expect(emAllocations.map((a) => a.id).sort()).toEqual(['emergency_truck-01', 'emergency_truck-02']);
+    // Each allocation requires the single shared emergency vehicle.
+    for (const a of emAllocations) {
+      expect(a.resourceRequirements.some((r) => r.resourceId === 'res-emergencyvehicle-1')).toBe(true);
+    }
 
     const single = runSimulation(compiled.scenario!, EMPTY, 'continue');
     expect(single.ok).toBe(true);
