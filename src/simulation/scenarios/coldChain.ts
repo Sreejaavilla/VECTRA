@@ -957,22 +957,33 @@ const actions: ActionDefinition[] = [
  * --------------------------------------------------------------------------- */
 
 export interface DisruptionConfig {
+  /**
+   * Minute the primary vehicle loses refrigeration.
+   *   undefined -> the scenario default (35), preserving every existing test
+   *   null      -> no failure at all (a stable "normal operations" baseline)
+   *   number    -> fail at that minute (used by live incident injection)
+   */
+  refrigerationFailureAtMinutes?: number | null;
   /** A route that becomes impassable mid-run. Anything on it halts in place. */
   routeBlockage?: { routeId: string; atMinutes: number };
 }
 
-const REFRIGERATION_FAILURE: ScheduledEvent = {
-  id: 'event-refrigeration-failure',
-  atMinutes: COLD_CHAIN.failureTimeMinutes,
-  type: 'FAILURE',
-  eventClass: 'system',
-  entityId: 'truck-01',
-  focusEntityId: 'truck-01',
-  message: 'Refrigeration failure — temperature control lost on the shipment',
-  severity: 'critical',
-  breaksRefrigeration: ['truck-01'],
-  setFlags: { 'failure:occurred': COLD_CHAIN.failureTimeMinutes },
-};
+function refrigerationFailureEvent(atMinutes: number): ScheduledEvent {
+  return {
+    id: 'event-refrigeration-failure',
+    atMinutes,
+    type: 'FAILURE',
+    eventClass: 'system',
+    entityId: 'truck-01',
+    focusEntityId: 'truck-01',
+    message: 'Refrigeration failure — temperature control lost on the shipment',
+    severity: 'critical',
+    breaksRefrigeration: ['truck-01'],
+    setFlags: { 'failure:occurred': atMinutes },
+  };
+}
+
+const REFRIGERATION_FAILURE = refrigerationFailureEvent(COLD_CHAIN.failureTimeMinutes);
 
 function routeLabel(routeId: string): string {
   const route = routes.find((r) => r.id === routeId);
@@ -981,8 +992,34 @@ function routeLabel(routeId: string): string {
   return `corridor to ${to}`;
 }
 
+/**
+ * A do-nothing action for the "normal operations" baseline: the shipment simply
+ * runs its route with no incident and no operator decision. Never enters
+ * `evaluateScenario` — it exists only so the live console can render a stable
+ * network before a disruption is injected.
+ */
+const MONITOR_ACTION: ActionDefinition = {
+  id: 'monitor',
+  label: 'Monitor',
+  decisionTimeMinutes: 0,
+  preconditions: [],
+  resourceRequirements: [],
+  transitions: [],
+  emittedEvents: [],
+  costModel: {},
+};
+
 export function makeColdChainScenario(disruption: DisruptionConfig = {}): ScenarioConfig {
-  const scheduledEvents: ScheduledEvent[] = [REFRIGERATION_FAILURE];
+  const failAt =
+    disruption.refrigerationFailureAtMinutes === undefined
+      ? COLD_CHAIN.failureTimeMinutes
+      : disruption.refrigerationFailureAtMinutes;
+  const scheduledEvents: ScheduledEvent[] =
+    failAt === null ? [] : [refrigerationFailureEvent(failAt)];
+
+  if (failAt === null && !disruption.routeBlockage) {
+    return { ...SCENARIO_BASE, scheduledEvents, actions: [MONITOR_ACTION] };
+  }
 
   if (disruption.routeBlockage) {
     const { routeId, atMinutes } = disruption.routeBlockage;

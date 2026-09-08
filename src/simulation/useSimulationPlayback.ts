@@ -29,9 +29,24 @@ export interface SimulationPlayback {
   stepBackward: () => void;
 }
 
-export function useSimulationPlayback(result: SimulationResult | null): SimulationPlayback {
+export interface PlaybackOptions {
+  /**
+   * Time to seek to when `result` changes, instead of snapping to 0. Live
+   * operations swaps the displayed trajectory mid-run (inject / execute) and
+   * needs playback to continue from where the operator was.
+   */
+  startTime?: number;
+  /** Keep playing after a result swap. */
+  autoPlay?: boolean;
+}
+
+export function useSimulationPlayback(
+  result: SimulationResult | null,
+  options: PlaybackOptions = {},
+): SimulationPlayback {
+  const { startTime = 0, autoPlay = false } = options;
   const duration = result?.duration ?? 0;
-  const [currentTime, setCurrentTime] = useState(0);
+  const [currentTime, setCurrentTime] = useState(startTime);
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeedState] = useState<PlaybackSpeed>(1);
 
@@ -40,11 +55,14 @@ export function useSimulationPlayback(result: SimulationResult | null): Simulati
 
   const stepTimes = useMemo(() => result?.steps.map((s) => s.timestamp) ?? [], [result]);
 
-  // Reset whenever the underlying result identity changes.
+  // Reset whenever the underlying result identity changes. `startTime` lets a
+  // caller preserve continuity across a trajectory swap.
   useEffect(() => {
-    setCurrentTime(0);
-    setIsPlaying(false);
+    const clamped = Math.max(0, Math.min(startTime, result?.duration ?? 0));
+    setCurrentTime(clamped);
+    setIsPlaying(Boolean(autoPlay && result));
     lastTsRef.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result]);
 
   // rAF advance loop.
